@@ -2,6 +2,12 @@ from torch.utils.data import DataLoader, Subset
 from torchvision import datasets, transforms
 from pytorch_lightning import LightningDataModule
 import torch
+import os
+from torch.utils.data import DataLoader, random_split, TensorDataset
+from torchvision import datasets, transforms
+from torchvision.transforms import InterpolationMode
+from PIL import ImageOps
+
 
 class MNISTDataModule(LightningDataModule):
     def __init__(self, data_dir: str = './Datasets', batch_size: int = 16, num_workers: int = 0):
@@ -45,3 +51,109 @@ class MNISTDataModule(LightningDataModule):
 
     def test_dataloader(self):
         return DataLoader(self.mnist_test, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+    
+
+
+
+
+def get_transform(dataset_name, device, grey=False, augment=False, flatten=True):
+    tf = []
+
+    if dataset_name == 'Omniglot':
+        tf.append(transforms.Resize(28, interpolation=InterpolationMode.NEAREST))
+        tf.append(transforms.Lambda(lambda img: ImageOps.invert(img.convert('L'))))
+    if dataset_name == "CIFAR16":
+        tf.append(transforms.Resize(16))
+    if grey:
+        tf.append(transforms.Grayscale())
+
+    tf.append(transforms.ToTensor())
+
+    if dataset_name in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        if grey:
+            tf.append(transforms.Normalize(mean=[0.5], std=[0.5]))
+        else:
+            tf.append(transforms.Normalize(mean=[0.5]*3, std=[0.5]*3))
+
+    if augment and dataset_name in ['CIFAR10', 'CIFAR16']:
+        tf.insert(0, transforms.RandomHorizontalFlip(p=1.0))
+
+    if flatten:
+        tf.append(transforms.Lambda(lambda x: x.view(-1)))
+
+    tf.append(transforms.Lambda(lambda x: x.to(device)))
+    return transforms.Compose(tf)
+
+
+class DataModule(LightningDataModule):
+    def __init__(self, 
+                 dataset_name="MNIST", 
+                 data_dir="./datasets", 
+                 batch_size=64, 
+                 num_workers=0,
+                 val_split=0.1, 
+                 device='cpu', 
+                 grey = False, 
+                 augment = False,
+                 flatten = True):
+        super().__init__()
+        self.dataset_name = dataset_name
+        self.data_dir = data_dir
+        self.batch_size = batch_size
+        self.val_split = val_split
+        self.device = device
+        self.grey = grey
+        self.augment = augment
+        self.num_workers = num_workers
+        self.flatten = flatten
+
+        self.transform = get_transform(dataset_name, device, grey, augment, flatten)
+
+    def prepare_data(self):
+        name = self.dataset_name.lower()
+        if name == "svhn":
+            datasets.SVHN(root=self.data_dir, split='train', download=True)
+            datasets.SVHN(root=self.data_dir, split='test', download=True)
+        elif name == "omniglot":
+            datasets.Omniglot(root=self.data_dir, background=True, download=True)
+            datasets.Omniglot(root=self.data_dir, background=False, download=True)
+        else:
+            if name == "cifar16":
+                self.dataset_name = "CIFAR10"
+            dataset_cls = getattr(datasets, self.dataset_name)
+            dataset_cls(root=self.data_dir, train=True, download=True)
+            dataset_cls(root=self.data_dir, train=False, download=True)
+
+    def setup(self, stage=None):
+        name = self.dataset_name
+
+        
+        if name == "SVHN":
+            full = datasets.SVHN(root=self.data_dir, split="train", transform=self.transform)
+            self.test_set = datasets.SVHN(root=self.data_dir, split="test", transform=self.transform)
+        elif name == "Omniglot":
+            full = datasets.Omniglot(root=self.data_dir, background=True, transform=self.transform)
+            self.test_set = datasets.Omniglot(root=self.data_dir, background=False, transform=self.transform)
+        else:
+            if name == "CIFAR16":
+                dataset_cls = getattr(datasets, "CIFAR10")
+            else:
+                dataset_cls = getattr(datasets, name)
+            full = dataset_cls(root=self.data_dir, train=True, transform=self.transform)
+            self.test_set = dataset_cls(root=self.data_dir, train=False, transform=self.transform)
+
+        val_len = int(len(full) * self.val_split)
+        train_len = len(full) - val_len
+        import math
+        self.train_steps_per_epoch = math.ceil(train_len/ self.batch_size)
+
+        self.train_set, self.val_set = random_split(full, [train_len, val_len])
+
+    def train_dataloader(self):
+        return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)
+
+    def val_dataloader(self):
+        return DataLoader(self.val_set, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+    def test_dataloader(self):
+        return DataLoader(self.test_set, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)

@@ -1,0 +1,65 @@
+# ===============================
+# Dataset configuration
+# ===============================
+dataset:
+  name: "MNIST"
+
+# ===============================
+# Model configuration
+# ===============================
+model:
+  name: "negbio"              # or "poisson"
+  latent_dim: 128             # dimension of latent variable z
+  reparam_type: "gamma"       # "gumbel" or "gamma"
+  max_count: 30
+  tau: 1.0
+
+# ===============================
+# Encoder configuration
+# ===============================
+encoder:
+  type: "linear"                # or "linear"
+  input_dim: 784              # only needed for linear encoder
+  latent_dim: 128
+
+# ===============================
+# Decoder configuration
+# ===============================
+decoder:
+  type: "linear"                # or "linear"
+  output_dim: 784             # only needed for linear decoder
+  latent_dim: 128
+
+# ===============================
+# Optimizer configuration
+# ===============================
+optimizer:
+  name: "adam"                # or "sgd"
+  lr: 0.001                  # learning rate
+  weight_decay: 0.0           # optional
+
+# ===============================
+# Trainer settings
+# ===============================
+trainer:
+  beta_max: 5.0               # max beta for KL scheduling
+  schedule_epochs: 250        # warm-up schedule for beta
+  max_epochs: 100             # total training epochs
+  gpus: 1                     # number of GPUs to use
+
+# ===============================
+# Logging / checkpointing (optional)
+# ===============================
+
+eval:
+  fid_feature: 64
+  log_images: true
+
+
+
+logging:
+  use_wandb: False
+  wandb_project: "vae-experiments"
+  log_images: true
+  save_checkpoints: true
+  monitor: "val_fid"

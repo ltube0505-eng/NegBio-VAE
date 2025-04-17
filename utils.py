@@ -3,7 +3,8 @@ import matplotlib.pyplot as plt
 
 
 
-def build_encoder(encoder_cfg):
+def build_encoder(cfg):
+    encoder_cfg = cfg['encoder']
     name = encoder_cfg['type'].lower()
     latent_dim = encoder_cfg.get('latent_dim', 128)
     if name == 'linear':
@@ -12,11 +13,24 @@ def build_encoder(encoder_cfg):
             latent_dim=latent_dim
         )
     elif name == 'conv':
-        return ConvEncoder(latent_dim=latent_dim)
+        return ConvEncoder(latent_dim=latent_dim,
+                           dataset = cfg['dataset']['name'],
+                           use_norm=encoder_cfg['use_norm'],
+                           bias = encoder_cfg['bias'])
+        # return ConvEncoder(encoder_cfg,
+        #                    cfg['dataset']['name'], 
+        #                    latent_dim=128, 
+        #                    n_ch=32)
     else:
         raise ValueError(f"Unsupported encoder type: {name}")
 
-def build_decoder(decoder_cfg):
+
+
+
+
+
+def build_decoder(cfg):
+    decoder_cfg = cfg['decoder']
     name = decoder_cfg['type'].lower()
     latent_dim = decoder_cfg.get('latent_dim', 128)
     if name == 'linear':
@@ -53,3 +67,8 @@ def log_latent_mean_vs_var(logger, z, step_name = "val", caption = "Latent mean 
         f"{step_name}_overdispersion_index": overdispersion_index
     })
     plt.close(fig)
+
+
+def gumbel_entropy(y):
+    # y: [B, D, K] softmax output
+    return -(y * y.clamp(min=1e-8).log()).sum(dim=-1).mean()

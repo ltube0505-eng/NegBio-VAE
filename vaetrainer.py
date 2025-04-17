@@ -7,7 +7,7 @@ import wandb as wdb
 from pytorch_lightning.loggers import wandb
 from torchmetrics.image.fid import FrechetInceptionDistance
 from model import GenericVAE
-from utils import build_decoder, build_encoder
+from utils import build_decoder, build_encoder, gumbel_entropy
 
 
 
@@ -16,14 +16,17 @@ class VAETrainer(pl.LightningModule):
     def __init__(self, cfg, **args):
         super(VAETrainer, self).__init__()
         self.cfg = cfg 
-        encoder = build_encoder(cfg['encoder'])
-        decoder = build_decoder(cfg['decoder'])
+        encoder = build_encoder(cfg)
+        decoder = build_decoder(cfg)
        
         self.model = GenericVAE(
                 encoder=encoder,
                 decoder=decoder,
                 latent_dim=cfg['model']['latent_dim'],
-                dist_type=cfg['model']['name']
+                dist_type=cfg['model']['name'],
+                reparam_type = cfg['model']['reparam_type'],
+                max_count = cfg['model']['max_count'],
+                tau = cfg['model']['tau'],
             )
         self.model_name = cfg['model']['name']
 
@@ -47,12 +50,15 @@ class VAETrainer(pl.LightningModule):
 
 
     def forward(self, x):
-        return self.model(x[0].flatten(1))
+        if self.cfg['encoder']['type']=="linear":
+            return self.model(x[0].flatten(1))
+        else:
+            return self.model(x[0])
     
     def training_step(self, batch, batch_idx):
         x = batch[0].view(batch[0].size(0), -1) 
         epoch = self.current_epoch + batch_idx/self.train_length
-        self.beta = min(5.0, 5*epoch/250)
+        self.beta = min(1.0, 5*epoch/250)
         self.model.t = max((1.0 - 0.95*epoch/250), 0.05)
         self.log('beta', self.beta)
         self.log('t', self.model.t)
@@ -62,12 +68,25 @@ class VAETrainer(pl.LightningModule):
             kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
             dist, logit_p, z, y = self(batch)
-            kl = dist.kl(self.model.log_r_prior, self.model.logit_p_prior).mean()
+            if self.cfg['model']['reparam_type'] == "gumbel":
+                entropy_loss = gumbel_entropy(y)
+
+            kl = self.model.dist_class.kl(self.model.log_r_prior, 
+                                          self.model.logit_p_prior, 
+                                          logit_p
+                                        ).mean()
+
+      
+        if self.cfg['decoder']['type']=="conv":
+            x = batch[0].view(-1, 1, 28, 28)
 
         mse = ((y - x)**2).sum(-1).mean()
-        loss = self.beta*kl + mse
+        loss = self.beta*kl + mse 
+
         self.log('train_loss', loss.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('train_elbo', (kl + mse).item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("latent mean", (z.mean()).item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log("latent std", (z.std()).item(), on_step=True, on_epoch=True, prog_bar=True)
         return loss
     
     @torch.no_grad()
@@ -79,7 +98,10 @@ class VAETrainer(pl.LightningModule):
             kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
             dist, logit_p, z, y = self(batch)
-            kl = dist.kl(self.model.log_r_prior, self.model.logit_p_prior).mean()
+            kl = self.model.dist_class.kl(self.model.log_r_prior, self.model.logit_p_prior, logit_p).mean()
+
+        if self.cfg['decoder']['type']=="conv":
+            x = x.view(-1, 1, 28, 28)
 
         mse = ((y - x)**2).sum(-1).mean()
         loss = self.beta*kl + mse

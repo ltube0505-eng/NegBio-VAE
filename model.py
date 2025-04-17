@@ -62,14 +62,21 @@ class GenericVAE(nn.Module):
                  decoder: nn.Module,
                  latent_dim: int=128,
                  dist_type: str = 'negbio',
-                 dist_class = None
+                 dist_class = None,
+                 reparam_type = "gamma",
+                 max_count = 15,
+                 tau = 1.0,
+                 **kwargs
                  ):
         super(GenericVAE, self).__init__()
         assert dist_type in ['poisson', 'negbio']
         self.dist_type = dist_type
-        self.dist_class = dist_class
+        # self.dist_class = dist_class
         self.latent_dim = latent_dim 
-
+        self.reparam_type = reparam_type
+        self.max_count = max_count
+        self.tau = tau
+        
         self.encode = encoder 
         self.decode = decoder 
         self.t = 1.0
@@ -77,6 +84,12 @@ class GenericVAE(nn.Module):
         if dist_type == 'poisson':
             self.prior = nn.Parameter(torch.zeros((1, latent_dim)))
         elif dist_type == 'negbio':
+            self.dist_class = NegBinomial(
+                            reparam_type=reparam_type,
+                            max_count=max_count,
+                            tau=tau,
+                            latent_dim=latent_dim
+                        )
             self.log_r_prior = nn.Parameter(torch.zeros((1, latent_dim)))
             self.logit_p_prior = nn.Parameter(torch.zeros((1, latent_dim)))
 
@@ -95,10 +108,18 @@ class GenericVAE(nn.Module):
 
         elif self.dist_type == "negbio":
             logit_p = self.encode(x).clamp(-5, 5)
-            dist = NegBinomial(self.log_r_prior, logit_p, self.t)
-            z = dist.rsample(hard=validation)
+            if self.reparam_type == "gamma":
+                # dist = NegBinomial(self.reparam_type, self.max_count, self.tau)
+                z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
+            elif self.reparam_type == "gumbel":
+                #dist = NegBinomial(self.reparam_type, self.max_count, self.tau)
+                z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
+                # print(z[0, :10])
+
+            # print(f"[Gumbel] z mean: {z.mean().item():.2f}, std: {z.std().item():.2f}")
+             
             y = self.decode(z)
-            return dist, logit_p, z, y
+            return self.dist_class, logit_p, z, y
         
         else:
             raise NotImplementedError

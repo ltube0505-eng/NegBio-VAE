@@ -1,4 +1,5 @@
 from data import MNISTDataModule
+from data import DataModule
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
 from absl import app, flags
@@ -10,36 +11,55 @@ import wandb as wdb
 from pytorch_lightning.loggers import wandb
 import yaml
 from vaetrainer import VAETrainer
+from callback import GumbelMonitorCallback
 warnings.filterwarnings("ignore")
 
 
 FLAGS = flags.FLAGS
+flags.DEFINE_string("reparam_type", "gamma", "Model type: gamma or gumbel")
+flags.DEFINE_string("model_type", "negbio", "Model type: negbio or poisson")
 flags.DEFINE_string("dataset", "MNIST", "dataset name")
 
 
 def main(argv):
-    # version 1 (download)
-    name = 'PVAE_minimal' #change to your run name
-    data_dir = "/Data/Datasets/" #change to your data directory
-    project_name = "PVAE" #change to your wandb project name
+  
+    name = 'NegBio-VAE'
+    data_dir = "/Data/Datasets/" 
+    project_name = "negbio" 
     root_dir = "data"
     bsize = 256
-    # train_device = "0"
-    # device = train_device + "," #lightning device formatting
+
     checkpoint_dir = os.path.join(root_dir, name)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    dm = MNISTDataModule(data_dir='./Datasets', batch_size=16)
-    torch.autograd.set_detect_anomaly(True)
-    # version 2 (local)
-    # Make sure the local .npy files exist in data_dir!
-    # dm = LocalMNISTDataModule(data_dir='./local_mnist', batch_size=64)
-    dataset = "MNIST"
-    with open("config.yaml", "r") as f:
-        cfg = yaml.safe_load(f)
+    if FLAGS.model_type == "poisson":
+        with open("configs/pvaeconfig.yaml", "r") as f:
+            cfg = yaml.safe_load(f)
+    else:
+        if FLAGS.reparam_type == "gamma":
+            with open("configs/gammaconfig.yaml", "r") as f:
+                cfg = yaml.safe_load(f)
+        elif FLAGS.reparam_type =="gumbel":
+            with open("configs/gumbelconfig.yaml", "r") as f:
+                cfg = yaml.safe_load(f)
 
     
+    if cfg['encoder']['type'] == "conv":
+        flatten_flag = False
+    else:
+        flatten_flag = True
+
+    print(flatten_flag)
+
+    dm = DataModule(FLAGS.dataset, batch_size=16, flatten=flatten_flag)
+    # dm = MNISTDataModule(data_dir='./Datasets', batch_size=16)
+    
     model = VAETrainer(cfg)
+    # print("🔍 Trainable parameters in the model:")
+    # for name, param in model.named_parameters():
+    #     if "logits" in name:
+    #         print(f"  ✅ {name}: requires_grad={param.requires_grad}, shape={param.shape}")
+            
     trainer_args = {
     "callbacks": [
             pl.callbacks.ModelCheckpoint(
@@ -48,7 +68,9 @@ def main(argv):
                 save_top_k=1,
                 mode='min',
                 verbose=False
-            )
+            ),
+            GumbelMonitorCallback(log_every_n_steps=1)
+
         ],
         "accelerator": "cpu",
         "logger": wandb.WandbLogger(project=project_name, name=name, save_code=False),
@@ -61,7 +83,7 @@ def main(argv):
         **trainer_args,
         default_root_dir=checkpoint_dir,
         max_epochs=500,
-        num_sanity_val_steps=0
+        num_sanity_val_steps=0,
     )
 
 
