@@ -152,7 +152,11 @@ class NegBinomial(nn.Module):
             return z, None
     
         elif self.reparam_type == "gumbel":
-            return self.gumbel_module(logit_p, hard=hard)
+            gamma_scale = (1 - p) / p
+            rate = torch.distributions.Gamma(r, gamma_scale).rsample()
+            z = self.gumbel_module(rate, hard=hard)
+            return z
+            # return self.gumbel_module(logit_p, hard=hard)
         
                 
     def kl(self, log_r_prior, logit_p_prior, logit_p_post):
@@ -191,31 +195,49 @@ class GumbelNegBinomial(nn.Module):
 
         self.register_buffer("count_range", torch.arange(max_count).float())
 
-    def forward(self, logit_p, hard=False):
-        """
-        Args:
-            logit_p: Tensor of shape [B, latent_dim] from encoder
-            hard: bool, whether to use hard (straight-through) sampling
-        Returns:
-            z: Tensor of shape [B, latent_dim], sampled latent count vector
-        """
-        B = logit_p.shape[0]
 
-        logits = self.logits_layer(logit_p)  # [B, latent_dim * max_count]
-        logits = logits.view(B, self.latent_dim, self.max_count)  # [B, D, K]
+    def forward(self, rate, hard=False):
+        k = self.count_range.view(1, 1, -1)  # [1,1,K]
+        rate = rate.unsqueeze(-1)  # [B, D, 1]
+        log_pmf = k * rate.log() - rate - torch.lgamma(k + 1)  # [B, D, K]
 
-        gumbels = -torch.empty_like(logits).exponential_().log()  # [B, D, K]
-        y = F.softmax((logits + gumbels) / self.tau, dim=-1)      # [B, D, K]
-        # print(y[0, 0])
+        # Gumbel noise
+        gumbel = -torch.empty_like(log_pmf).exponential_().log()
+        y = F.softmax((log_pmf + gumbel) / self.tau, dim=-1)
 
         if hard:
             index = y.max(dim=-1, keepdim=True)[1]
             y_hard = torch.zeros_like(y).scatter_(-1, index, 1.0)
-            y = (y_hard - y).detach() + y  # Straight-through
+            y = (y_hard - y).detach() + y
 
-        count_range = self.count_range.to(y.device)
-        z = (y * count_range).sum(-1)  # [B, latent_dim], expected count per dim
+        z = (y * self.count_range.to(rate.device)).sum(-1)  # [B, D]
         return z
+
+    # def forward(self, logit_p, hard=False):
+    #     """
+    #     Args:
+    #         logit_p: Tensor of shape [B, latent_dim] from encoder
+    #         hard: bool, whether to use hard (straight-through) sampling
+    #     Returns:
+    #         z: Tensor of shape [B, latent_dim], sampled latent count vector
+    #     """
+    #     B = logit_p.shape[0]
+
+    #     logits = self.logits_layer(logit_p)  # [B, latent_dim * max_count]
+    #     logits = logits.view(B, self.latent_dim, self.max_count)  # [B, D, K]
+
+    #     gumbels = -torch.empty_like(logits).exponential_().log()  # [B, D, K]
+    #     y = F.softmax((logits + gumbels) / self.tau, dim=-1)      # [B, D, K]
+    #     # print(y[0, 0])
+
+    #     if hard:
+    #         index = y.max(dim=-1, keepdim=True)[1]
+    #         y_hard = torch.zeros_like(y).scatter_(-1, index, 1.0)
+    #         y = (y_hard - y).detach() + y  # Straight-through
+
+    #     count_range = self.count_range.to(y.device)
+    #     z = (y * count_range).sum(-1)  # [B, latent_dim], expected count per dim
+    #     return z
 
     
 
