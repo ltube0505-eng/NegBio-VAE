@@ -12,6 +12,9 @@ dataset:
 model:
   name: "poisson"              # or "poisson"
   latent_dim: 128             # dimension of latent variable z
+  reparam_type: ""
+  max_count: -1
+  tau: -1
 # ===============================
 # Encoder configuration
 # ===============================
