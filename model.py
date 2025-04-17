@@ -88,7 +88,6 @@ class GenericVAE(nn.Module):
                             reparam_type=reparam_type,
                             max_count=max_count,
                             tau=tau,
-                            latent_dim=latent_dim
                         )
             self.log_r_prior = nn.Parameter(torch.zeros((1, latent_dim)))
             self.logit_p_prior = nn.Parameter(torch.zeros((1, latent_dim)))

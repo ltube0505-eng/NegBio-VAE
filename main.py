@@ -19,6 +19,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("reparam_type", "gamma", "Model type: gamma or gumbel")
 flags.DEFINE_string("model_type", "negbio", "Model type: negbio or poisson")
 flags.DEFINE_string("dataset", "MNIST", "dataset name")
+flags.DEFINE_bool("local", True, "If local, run small set of MNIST")
 
 
 def main(argv):
@@ -51,8 +52,11 @@ def main(argv):
 
     print(flatten_flag)
 
-    dm = DataModule(FLAGS.dataset, batch_size=16, flatten=flatten_flag)
-    # dm = MNISTDataModule(data_dir='./Datasets', batch_size=16)
+    if FLAGS.local is True:
+        dm = MNISTDataModule(data_dir='./Datasets', batch_size=16)
+    else:
+        dm = DataModule(FLAGS.dataset, batch_size=16, flatten=flatten_flag)
+    
     
     model = VAETrainer(cfg)
     # print("🔍 Trainable parameters in the model:")

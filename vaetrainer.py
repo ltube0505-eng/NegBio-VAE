@@ -70,10 +70,7 @@ class VAETrainer(pl.LightningModule):
             dist, du, z, y = self(batch)
             kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
-            dist, logit_p, z, y = self(batch)
-            if self.cfg['model']['reparam_type'] == "gumbel":
-                entropy_loss = gumbel_entropy(y)
-
+            dist, logit_p, z, y = self(batch)     
             kl = self.model.dist_class.kl(self.model.log_r_prior, 
                                           self.model.logit_p_prior, 
                                           logit_p
