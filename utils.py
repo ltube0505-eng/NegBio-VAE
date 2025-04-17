@@ -1,6 +1,6 @@
-from architecture import *
-import matplotlib.pyplot as plt 
+import matplotlib.pyplot as plt
 
+from architecture import *
 
 
 def build_encoder(cfg):
@@ -52,7 +52,7 @@ def log_latent_mean_vs_var(logger, z, step_name = "val", caption = "Latent mean 
     # Plot mean vs var
     fig, ax = plt.subplots(figsize=(5, 5))
     ax.scatter(z_mean.cpu(), z_var.cpu(), alpha=0.6, label='Latent units')
-    ax.plot([0, z_mean.max()], [0, z_mean.max()], 'r--', label='Poisson (mean=var)')
+    ax.plot([0, z_mean.cpu().max()], [0, z_mean.cpu().max()], 'r--', label='Poisson (mean=var)')
     ax.set_xlabel('Mean of $z_i$')
     ax.set_ylabel('Variance of $z_i$')
     ax.set_title(f'[{step_name}] Latent Mean vs Variance')

@@ -1,15 +1,20 @@
-import torch.nn as nn
-from torchvision import datasets
-from torch.utils.data import DataLoader
-import torchvision, math, os, torch
-import pytorch_lightning as pl
-import wandb as wdb
-from pytorch_lightning.loggers import wandb
-from torchmetrics.image.fid import FrechetInceptionDistance
-import torch.nn.functional as F
-import torch
-from scipy.stats import poisson
+import math
+import os
+
 import numpy as np
+import pytorch_lightning as pl
+import torch
+import torch.nn as nn
+import torch.nn.functional as F
+import torchvision
+from pytorch_lightning.loggers import wandb
+from scipy.stats import poisson
+from torch.utils.data import DataLoader
+from torchmetrics.image.fid import FrechetInceptionDistance
+from torchvision import datasets
+
+import wandb as wdb
+
 
 class Poisson:
     # This code is copied from Poisson-VAE
@@ -130,7 +135,7 @@ class NegBinomial(nn.Module):
                 tau=tau
             )
          
-        else:
+        elif reparam_type != "gamma":
             raise ValueError(f"Unknown reparam_type: {reparam_type}")
         
 
@@ -149,7 +154,7 @@ class NegBinomial(nn.Module):
             if not (hard or t == 0):
                 indicator = torch.sigmoid((1.0 - times) / t)
             z = indicator.sum(0).float()
-            return z, None
+            return z
     
         elif self.reparam_type == "gumbel":
             gamma_scale = (1 - p) / p

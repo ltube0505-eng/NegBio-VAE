@@ -1,15 +1,18 @@
-import torch.nn as nn
-from torchvision import datasets
-from torch.utils.data import DataLoader
-import torchvision, math, os, torch
+import math
+import os
+
 import pytorch_lightning as pl
-import wandb as wdb
+import torch
+import torch.nn as nn
+import torchvision
 from pytorch_lightning.loggers import wandb
+from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
+from torchvision import datasets
+
+import wandb as wdb
 from model import GenericVAE
-from utils import build_decoder, build_encoder, gumbel_entropy
-
-
+from utils import build_decoder, build_encoder, gumbel_entropy, log_latent_mean_vs_var
 
 
 class VAETrainer(pl.LightningModule):
@@ -124,6 +127,12 @@ class VAETrainer(pl.LightningModule):
                 'recons': wdb.Image(fig_y, caption="recons"),
                 'inputs': wdb.Image(fig_x, caption="inputs"),
             })
+            log_latent_mean_vs_var(
+                logger=self.logger.experiment, 
+                z=z, 
+                step_name=f"val_epoch_{self.current_epoch}", 
+                caption="Latent mean vs var"
+            )
         return loss
     
     def on_validation_epoch_end(self):
