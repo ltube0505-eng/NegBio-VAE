@@ -45,28 +45,32 @@ def build_decoder(cfg):
     
 
 def log_latent_mean_vs_var(logger, z, step_name = "val", caption = "Latent mean vs variance"):
-    z_mean = z.mean(dim=0)
-    z_var = z.var(dim=0)
-    eps = 1e-8
+    z_mean = z.mean(dim=0).cpu()
+    z_var = z.var(dim=0).cpu()
 
     # Plot mean vs var
     fig, ax = plt.subplots(figsize=(5, 5))
-    ax.scatter(z_mean.cpu(), z_var.cpu(), alpha=0.6, label='Latent units')
-    ax.plot([0, z_mean.cpu().max()], [0, z_mean.cpu().max()], 'r--', label='Poisson (mean=var)')
+    ax.scatter(z_mean, z_var, alpha=0.6, label='Latent units')
+    ax.plot([0, z_mean.max()], [0, z_mean.max()], 'r--', label='Poisson (mean=var)')
     ax.set_xlabel('Mean of $z_i$')
     ax.set_ylabel('Variance of $z_i$')
     ax.set_title(f'[{step_name}] Latent Mean vs Variance')
     ax.legend()
     plt.tight_layout()
 
-    # Compute average overdispersion index
-    overdispersion_index = ((z_var + eps) / (z_mean + eps)).mean().item()
-
     logger.log({
-        f"{step_name}_mean_vs_var": wdb.Image(fig, caption=caption),
-        f"{step_name}_overdispersion_index": overdispersion_index
+        "latent_mean_vs_var": wdb.Image(fig, caption=caption),
     })
     plt.close(fig)
+
+
+def get_overdispersion_index(z, eps=1e-8):
+    z_mean = z.mean(dim=0).cpu()
+    z_var = z.var(dim=0).cpu()
+
+    overdispersion_index = ((z_var + eps) / (z_mean + eps)).mean().item()
+
+    return overdispersion_index
 
 
 def gumbel_entropy(y):

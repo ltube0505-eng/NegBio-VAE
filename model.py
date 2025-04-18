@@ -7,7 +7,7 @@ import wandb as wdb
 import matplotlib.pyplot as plt 
 from pytorch_lightning.loggers import wandb
 from torchmetrics.image.fid import FrechetInceptionDistance
-from distribution import NegBinomial, Poisson
+from distribution import NegBinomial, Poisson, NegBinomial_Gamma
 
 
 
@@ -109,7 +109,9 @@ class GenericVAE(nn.Module):
             logit_p = self.encode(x).clamp(-5, 5)
             if self.reparam_type == "gamma":
                 # dist = NegBinomial(self.reparam_type, self.max_count, self.tau)
-                z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
+                # z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
+                dist = NegBinomial_Gamma(self.log_r_prior, logit_p, self.t)
+                z = dist.rsample(hard=validation)
             elif self.reparam_type == "gumbel":
                 #dist = NegBinomial(self.reparam_type, self.max_count, self.tau)
                 z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
