@@ -41,6 +41,36 @@ class Poisson:
         return r-rdr+rdr*logdr
     
 
+class NegBinomial_Gamma:
+    def __init__(self, log_rate, logit_p, t=0.0):
+        self.log_rate = log_rate
+        self.rate = torch.exp(
+            self.log_rate.clamp(None, 5)
+        ) + 1e-6
+        self.p = torch.sigmoid(logit_p.clamp(-5, 5))
+        self.n_trials = int(math.ceil(max(self.rate.max().item(),1)*5)) # a large enough number of trials to sample from
+        self.t = t
+
+
+    def rsample(self, hard: bool = False):
+        gamma_scale = (1 - self.p) / self.p
+        rate = torch.distributions.Gamma(self.rate, gamma_scale).rsample()
+        x = torch.distributions.Exponential(rate).rsample((self.n_trials,))
+        times = torch.cumsum(x, dim=0)
+        indicator = times < 1.0
+        if not (hard or self.t == 0):
+            indicator = torch.sigmoid((1.0 - times) / self.t)
+        z = indicator.sum(0).float()
+        return z
+    def kl(self, log_r_prior, logit_p_prior, logit_p_post):
+        r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+        p = torch.sigmoid(logit_p_prior.clamp(-5, 5))  # prior p
+        q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))  # posterior p
+
+        ab = p * q_p
+        term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
+        return r * term
+    
 
 class NegBinomial(nn.Module):
     def __init__(self, 
