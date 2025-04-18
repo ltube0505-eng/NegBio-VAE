@@ -41,107 +41,48 @@ class Poisson:
         return r-rdr+rdr*logdr
     
 
-class NegBinomial_Gamma:
-    def __init__(self, log_rate, logit_p, t=0.0):
-        self.log_rate = log_rate
-        self.rate = torch.exp(
-            self.log_rate.clamp(None, 5)
-        ) + 1e-6
-        self.p = torch.sigmoid(logit_p.clamp(-5, 5))
-        self.n_trials = int(math.ceil(max(self.rate.max().item(),1)*5)) # a large enough number of trials to sample from
+
+
+
+class GammaSampler:
+    def __init__(self, t=0.0):
         self.t = t
 
+    def __call__(self, log_r, logit_p, hard=False):
+        return self.rsample(log_r, logit_p, hard)
 
-    def rsample(self, hard: bool = False):
-        gamma_scale = (1 - self.p) / self.p
-        rate = torch.distributions.Gamma(self.rate, gamma_scale).rsample()
-        x = torch.distributions.Exponential(rate).rsample((self.n_trials,))
+    def rsample(self, log_r, logit_p, hard=False):
+        r = torch.exp(log_r.clamp(None, 5)) + 1e-6
+        p = torch.sigmoid(logit_p.clamp(-5, 5))
+        gamma_scale = (1 - p) / p
+        rate = torch.distributions.Gamma(r, gamma_scale).rsample()
+        n_trials = int(math.ceil(max(rate.max().item(), 1) * 5))
+        x = torch.distributions.Exponential(rate).rsample((n_trials,))
         times = torch.cumsum(x, dim=0)
         indicator = times < 1.0
         if not (hard or self.t == 0):
             indicator = torch.sigmoid((1.0 - times) / self.t)
         z = indicator.sum(0).float()
         return z
-    def kl(self, log_r_prior, logit_p_prior, logit_p_post):
-        r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
-        p = torch.sigmoid(logit_p_prior.clamp(-5, 5))  # prior p
-        q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))  # posterior p
-
-        ab = p * q_p
-        term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
-        return r * term
-    
-
-class NegBinomial(nn.Module):
-    def __init__(self, 
-                 reparam_type = "gamma", 
-                 max_count = 15, 
-                 tau=1.0,):
-        super().__init__()
-        self.tau = tau 
-        self.max_count = max_count 
-        self.reparam_type = reparam_type
-    
-        if self.reparam_type == "gumbel":
-            self.gumbel_module = GumbelNegBinomial(
-                max_count=max_count, 
-                tau=tau
-            )
-         
-        elif reparam_type != "gamma":
-            raise ValueError(f"Unknown reparam_type: {reparam_type}")
-        
 
 
-    def rsample(self, log_r, logit_p, t= 0.0, hard: bool = False):
-        r = torch.exp(log_r.clamp(None, 5)) + 1e-6
-        p = torch.sigmoid(logit_p.clamp(-5, 5))
-
-        if self.reparam_type == "gamma":
-            gamma_scale = (1 - p) / p
-            rate = torch.distributions.Gamma(r, gamma_scale).rsample()
-            n_trials = int(math.ceil(max(rate.max().item(), 1) * 5))
-            x = torch.distributions.Exponential(rate).rsample((n_trials,))
-            times = torch.cumsum(x, dim=0)
-            indicator = times < 1.0
-            if not (hard or t == 0):
-                indicator = torch.sigmoid((1.0 - times) / t)
-            z = indicator.sum(0).float()
-            return z
-    
-        elif self.reparam_type == "gumbel":
-            gamma_scale = (1 - p) / p
-            rate = torch.distributions.Gamma(r, gamma_scale).rsample()
-            z = self.gumbel_module(rate, hard=hard)
-            return z
-        
-                
-    def kl(self, log_r_prior, logit_p_prior, logit_p_post):
-        r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
-        p = torch.sigmoid(logit_p_prior.clamp(-5, 5))  # prior p
-        q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))  # posterior p
-
-        ab = p * q_p
-        term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
-        return r * term
-    
-
-
-class GumbelNegBinomial(nn.Module):
-    def __init__(self, 
-                 max_count=15, 
-                 tau=1.0):
+class GumbelSampler(nn.Module):
+    def __init__(self, max_count=15, tau=1.0):
         super().__init__()
         self.max_count = max_count
         self.tau = tau
         self.register_buffer("count_range", torch.arange(max_count).float())
 
-    def forward(self, rate, hard = False):
-        k = self.count_range.view(1, 1, -1)  # [1,1,K]
-        rate = rate.unsqueeze(-1)  # [B, D, 1]
-        log_pmf = k * rate.log() - rate - torch.lgamma(k + 1)  # [B, D, K]
+    def forward(self, log_r, logit_p, hard=False):
+        r = torch.exp(log_r.clamp(None, 5)) + 1e-6
+        p = torch.sigmoid(logit_p.clamp(-5, 5))
+        gamma_scale = (1 - p) / p
+        rate = torch.distributions.Gamma(r, gamma_scale).rsample()
 
-        # Gumbel noise
+        k = self.count_range.view(1, 1, -1)
+        rate = rate.unsqueeze(-1)
+        log_pmf = k * rate.log() - rate - torch.lgamma(k + 1)
+
         gumbel = -torch.empty_like(log_pmf).exponential_().log()
         y = F.softmax((log_pmf + gumbel) / self.tau, dim=-1)
 
@@ -150,8 +91,147 @@ class GumbelNegBinomial(nn.Module):
             y_hard = torch.zeros_like(y).scatter_(-1, index, 1.0)
             y = (y_hard - y).detach() + y
 
-        z = (y * self.count_range.to(rate.device)).sum(-1)  # [B, D]
+        z = (y * self.count_range.to(rate.device)).sum(-1)
         return z
+
+
+class NegBinomial(nn.Module):
+    def __init__(self, reparam_type="gamma", max_count=15, tau=1.0):
+        super().__init__()
+        self.reparam_type = reparam_type
+        if reparam_type == "gamma":
+            self.strategy = GammaSampler(t=tau)
+        elif reparam_type == "gumbel":
+            self.strategy = GumbelSampler(max_count=max_count, tau=tau)
+        else:
+            raise ValueError(f"Unsupported reparam_type: {reparam_type}")
+
+    def rsample(self, log_r, logit_p, t=0.0, hard=False):
+        if self.reparam_type == "gamma":
+            self.strategy.t = t  # update t on the fly
+        return self.strategy(log_r, logit_p, hard=hard)
+
+    def kl(self, log_r_prior, logit_p_prior, logit_p_post):
+        r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+        p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
+        q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))
+
+        ab = p * q_p
+        term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
+        return r * term
+    
+
+# class NegBinomial_Gamma:
+#     def __init__(self, log_rate, logit_p, t=0.0):
+#         self.log_rate = log_rate
+#         self.rate = torch.exp(
+#             self.log_rate.clamp(None, 5)
+#         ) + 1e-6
+#         self.p = torch.sigmoid(logit_p.clamp(-5, 5))
+#         self.n_trials = int(math.ceil(max(self.rate.max().item(),1)*5)) # a large enough number of trials to sample from
+#         self.t = t
+
+
+#     def rsample(self, hard: bool = False):
+#         gamma_scale = (1 - self.p) / self.p
+#         rate = torch.distributions.Gamma(self.rate, gamma_scale).rsample()
+#         x = torch.distributions.Exponential(rate).rsample((self.n_trials,))
+#         times = torch.cumsum(x, dim=0)
+#         indicator = times < 1.0
+#         if not (hard or self.t == 0):
+#             indicator = torch.sigmoid((1.0 - times) / self.t)
+#         z = indicator.sum(0).float()
+#         return z
+#     def kl(self, log_r_prior, logit_p_prior, logit_p_post):
+#         r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+#         p = torch.sigmoid(logit_p_prior.clamp(-5, 5))  # prior p
+#         q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))  # posterior p
+
+#         ab = p * q_p
+#         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
+#         return r * term
+    
+
+# class NegBinomial(nn.Module):
+#     def __init__(self, 
+#                  reparam_type = "gamma", 
+#                  max_count = 15, 
+#                  tau=1.0,):
+#         super().__init__()
+#         self.tau = tau 
+#         self.max_count = max_count 
+#         self.reparam_type = reparam_type
+    
+#         if self.reparam_type == "gumbel":
+#             self.gumbel_module = GumbelNegBinomial(
+#                 max_count=max_count, 
+#                 tau=tau
+#             )
+         
+#         elif reparam_type != "gamma":
+#             raise ValueError(f"Unknown reparam_type: {reparam_type}")
+        
+
+
+#     def rsample(self, log_r, logit_p, t= 0.0, hard: bool = False):
+#         r = torch.exp(log_r.clamp(None, 5)) + 1e-6
+#         p = torch.sigmoid(logit_p.clamp(-5, 5))
+
+#         if self.reparam_type == "gamma":
+#             gamma_scale = (1 - p) / p
+#             rate = torch.distributions.Gamma(r, gamma_scale).rsample()
+#             n_trials = int(math.ceil(max(rate.max().item(), 1) * 5))
+#             x = torch.distributions.Exponential(rate).rsample((n_trials,))
+#             times = torch.cumsum(x, dim=0)
+#             indicator = times < 1.0
+#             if not (hard or t == 0):
+#                 indicator = torch.sigmoid((1.0 - times) / t)
+#             z = indicator.sum(0).float()
+#             return z
+    
+#         elif self.reparam_type == "gumbel":
+#             gamma_scale = (1 - p) / p
+#             rate = torch.distributions.Gamma(r, gamma_scale).rsample()
+#             z = self.gumbel_module(rate, hard=hard)
+#             return z
+        
+                
+#     def kl(self, log_r_prior, logit_p_prior, logit_p_post):
+#         r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+#         p = torch.sigmoid(logit_p_prior.clamp(-5, 5))  # prior p
+#         q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))  # posterior p
+
+#         ab = p * q_p
+#         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
+#         return r * term
+    
+
+
+# class GumbelNegBinomial(nn.Module):
+#     def __init__(self, 
+#                  max_count=15, 
+#                  tau=1.0):
+#         super().__init__()
+#         self.max_count = max_count
+#         self.tau = tau
+#         self.register_buffer("count_range", torch.arange(max_count).float())
+
+#     def forward(self, rate, hard = False):
+#         k = self.count_range.view(1, 1, -1)  # [1,1,K]
+#         rate = rate.unsqueeze(-1)  # [B, D, 1]
+#         log_pmf = k * rate.log() - rate - torch.lgamma(k + 1)  # [B, D, K]
+
+#         # Gumbel noise
+#         gumbel = -torch.empty_like(log_pmf).exponential_().log()
+#         y = F.softmax((log_pmf + gumbel) / self.tau, dim=-1)
+
+#         if hard:
+#             index = y.max(dim=-1, keepdim=True)[1]
+#             y_hard = torch.zeros_like(y).scatter_(-1, index, 1.0)
+#             y = (y_hard - y).detach() + y
+
+#         z = (y * self.count_range.to(rate.device)).sum(-1)  # [B, D]
+#         return z
 
 
     

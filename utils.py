@@ -1,4 +1,7 @@
+from typing import *
+
 import matplotlib.pyplot as plt
+import numpy as np
 
 from architecture import *
 
@@ -76,3 +79,50 @@ def get_overdispersion_index(z, eps=1e-8):
 def gumbel_entropy(y):
     # y: [B, D, K] softmax output
     return -(y * y.clamp(min=1e-8).log()).sum(dim=-1).mean()
+
+
+
+def tonp(x: Union[torch.Tensor, np.ndarray]):
+	if isinstance(x, np.ndarray):
+		return x
+	elif isinstance(x, torch.Tensor):
+		return x.data.cpu().numpy()
+	else:
+		raise ValueError(type(x).__name__)
+     
+
+def find_last_contiguous_zeros(mask: np.ndarray, w: int):
+	# mask = hist > 0.0
+	m = mask.astype(bool)
+	zero_count = 0
+	for idx, val in enumerate(m[::-1]):
+		if val == 0:
+			zero_count += 1
+		else:
+			zero_count = 0
+
+		if zero_count == w:
+			return len(m) - (idx - w + 2)
+	return 0
+
+
+def find_critical_ids(mask: np.ndarray):
+	# mask = hist > 0.0
+	m = mask.astype(bool)
+
+	first_zero = 0
+	for i in range(1, len(m)):
+		if m[i-1] and not m[i]:
+			first_zero = i
+			break
+
+	last_zero = -1
+	for i in range(len(m) - 2, -1, -1):
+		if not m[i] and m[i+1]:
+			last_zero = i
+			break
+
+	return first_zero, last_zero
+
+
+

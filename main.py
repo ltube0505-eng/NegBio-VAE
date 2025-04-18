@@ -1,18 +1,18 @@
-from data import MNISTDataModule
-from data import DataModule
-from pytorch_lightning import Trainer
-from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
-from lightning.pytorch import seed_everything
-from absl import app, flags
-import warnings 
-import torch
 import os
+import warnings
+
 import pytorch_lightning as pl
-import wandb as wdb
-from pytorch_lightning.loggers import wandb
+import torch
 import yaml
-from vaetrainer import VAETrainer
+from absl import app, flags
+from pytorch_lightning import Trainer, seed_everything
+from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, wandb
+
+import wandb as wdb
 from callback import GumbelMonitorCallback
+from data import DataModule, MNISTDataModule
+from vaetrainer import VAETrainer
+
 warnings.filterwarnings("ignore")
 
 
@@ -21,7 +21,7 @@ flags.DEFINE_string("reparam_type", "gamma", "Model type: gamma or gumbel")
 flags.DEFINE_string("model_type", "negbio", "Model type: negbio or poisson")
 flags.DEFINE_string("dataset", "MNIST", "dataset name")
 flags.DEFINE_integer("seed", 42, "dataset name")
-flags.DEFINE_bool("local", True, "If local, run small set of MNIST")
+flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 
 
 def main(argv):

@@ -18,7 +18,7 @@ model:
 # Encoder configuration
 # ===============================
 encoder:
-  type: "conv"                # or "linear"
+  type: "linear"                # or "linear"
   input_dim: 784              # only needed for linear encoder
   latent_dim: 128
   use_norm: true
@@ -34,7 +34,7 @@ encoder:
 # Decoder configuration
 # ===============================
 decoder:
-  type: "conv"                # or "linear"
+  type: "linear"                # or "linear"
   output_dim: 784             # only needed for linear decoder
   latent_dim: 128
 

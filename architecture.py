@@ -1,13 +1,17 @@
-import torch.nn as nn
-from torchvision import datasets
-from torch.utils.data import DataLoader
-import torchvision, math, os, torch
-import pytorch_lightning as pl
-import wandb as wdb
-from pytorch_lightning.loggers import wandb
-from torchmetrics.image.fid import FrechetInceptionDistance
-from architecture_utils import Linear, Conv2D, _build_conv_enc
+import math
+import os
 
+import pytorch_lightning as pl
+import torch
+import torch.nn as nn
+import torchvision
+from pytorch_lightning.loggers import wandb
+from torch.utils.data import DataLoader
+from torchmetrics.image.fid import FrechetInceptionDistance
+from torchvision import datasets
+
+import wandb as wdb
+from architecture_utils import Conv2D, Linear, _build_conv_enc
 
 # class LinearEncoder(nn.Module):
 #     def __init__(self, input_dim=784, latent_dim=128):
@@ -27,6 +31,7 @@ class LinearEncoder(nn.Module):
                  normalize=True, 
                  normalize_dim=0):
         super().__init__()
+        
         self.net = nn.Sequential(
             Linear(input_dim, latent_dim, normalize=normalize, normalize_dim=normalize_dim)
         )
@@ -94,8 +99,10 @@ class ConvEncoder(nn.Module):
 class LinearDecoder(nn.Module):
     def __init__(self, latent_dim=128, output_dim=784, normalize=True, normalize_dim=0):
         super().__init__()
+        self.fc_dec = Linear(latent_dim, output_dim, normalize=normalize, normalize_dim=normalize_dim)
         self.net = nn.Sequential(
-            Linear(latent_dim, output_dim, normalize=normalize, normalize_dim=normalize_dim),
+            # Linear(latent_dim, output_dim, normalize=normalize, normalize_dim=normalize_dim),
+            self.fc_dec,
             nn.Sigmoid()
         )
 
@@ -104,11 +111,13 @@ class LinearDecoder(nn.Module):
 
     
 class ConvDecoder(nn.Module):
-    def __init__(self, latent_dim=128, out_channels=1):
+    def __init__(self, latent_dim=128, out_channels=1,normalize=True, 
+                 normalize_dim=0):
         super().__init__()
 
         # Fully connected layer to expand from latent_dim to feature map
-        self.fc = nn.Linear(latent_dim, 128 * 7 * 7)
+        # self.fc_dec = nn.Linear(latent_dim, 128 * 7 * 7)
+        self.fc_dec = Linear(latent_dim, 128 * 7 * 7, normalize=normalize, normalize_dim=normalize_dim)
 
         # Transposed conv layers to upscale to 28x28
         self.deconv = nn.Sequential(
@@ -119,7 +128,7 @@ class ConvDecoder(nn.Module):
         )
 
     def forward(self, z):
-        x = self.fc(z)  # [B, 128*7*7]
+        x = self.fc_dec(z)  # [B, 128*7*7]
         x = x.view(-1, 128, 7, 7)  # reshape to [B, 128, 7, 7]
         x = self.deconv(x)  # [B, 1, 28, 28]
         return x
