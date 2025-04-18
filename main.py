@@ -2,6 +2,7 @@ from data import MNISTDataModule
 from data import DataModule
 from pytorch_lightning import Trainer
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger
+from lightning.pytorch import seed_everything
 from absl import app, flags
 import warnings 
 import torch
@@ -19,16 +20,19 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("reparam_type", "gamma", "Model type: gamma or gumbel")
 flags.DEFINE_string("model_type", "negbio", "Model type: negbio or poisson")
 flags.DEFINE_string("dataset", "MNIST", "dataset name")
+flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", True, "If local, run small set of MNIST")
 
 
 def main(argv):
   
-    name = 'NegBio-VAE'
+    seed_everything(FLAGS.seed, workers=True)
+
+    name = f'{FLAGS.model_type}-{FLAGS.reparam_type}-{FLAGS.dataset}-{FLAGS.seed}'
     data_dir = "/Data/Datasets/" 
     project_name = "negbio" 
     root_dir = "data"
-    bsize = 256
+    bsize = 512
 
     checkpoint_dir = os.path.join(root_dir, name)
     os.makedirs(checkpoint_dir, exist_ok=True)
@@ -52,10 +56,10 @@ def main(argv):
 
     print(flatten_flag)
 
-    if FLAGS.local is True:
-        dm = MNISTDataModule(data_dir='./Datasets', batch_size=16)
+    if FLAGS.local:
+        dm = MNISTDataModule(data_dir='./Datasets', batch_size=bsize)
     else:
-        dm = DataModule(FLAGS.dataset, batch_size=16, flatten=flatten_flag)
+        dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag)
     
     
     model = VAETrainer(cfg)
@@ -76,7 +80,7 @@ def main(argv):
             GumbelMonitorCallback(log_every_n_steps=1)
 
         ],
-        "accelerator": "cpu",
+        "accelerator": "auto",
         "logger": wandb.WandbLogger(project=project_name, name=name, save_code=False),
         "gradient_clip_val": 1.0,
     }

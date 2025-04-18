@@ -12,7 +12,7 @@ from torchvision import datasets
 
 import wandb as wdb
 from model import GenericVAE
-from utils import build_decoder, build_encoder, gumbel_entropy, log_latent_mean_vs_var
+from utils import build_decoder, build_encoder, gumbel_entropy, log_latent_mean_vs_var, get_overdispersion_index
 
 
 class VAETrainer(pl.LightningModule):
@@ -42,12 +42,16 @@ class VAETrainer(pl.LightningModule):
         self.train_length = None
 
         fid_feat_dim = cfg.get('eval', {}).get('fid_feature', 64)
-        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, normalize=True)
+        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True)
         self.log_images = cfg.get('eval', {}).get('log_images', True)
 
     def setup(self, stage = None):
         if hasattr(self.trainer.datamodule, 'train_steps_per_epoch'):
             self.train_length = self.trainer.datamodule.train_steps_per_epoch
+
+            # for batch in self.trainer.datamodule.val_dataloader():
+            #     real_imgs = batch[0].repeat(1, 3, 1, 1)
+            #     self.fid_metric.update(real_imgs, real=True)
         else:
             raise ValueError("DataModule not defined train_steps_per_epoch")
 
@@ -89,7 +93,6 @@ class VAETrainer(pl.LightningModule):
         self.log("latent std", (z.std()).item(), on_step=True, on_epoch=True, prog_bar=True)
         return loss
     
-    @torch.no_grad()
     def validation_step(self, batch, batch_idx):
         x = batch[0].view(batch[0].size(0), -1) 
 
@@ -105,11 +108,13 @@ class VAETrainer(pl.LightningModule):
 
         mse = ((y - x)**2).sum(-1).mean()
         loss = self.beta*kl + mse
+        overdispersion_index = get_overdispersion_index(z)
 
         self.log('val_mse', mse.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_kl', kl.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_elbo', (kl + mse).item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('l0_sparsity', (z == 0).float().mean().item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log('overdispersion_index', overdispersion_index, on_step=True, on_epoch=True, prog_bar=True)
 
         real_imgs = batch[0].repeat(1, 3, 1, 1)  # MNIST 是 1 通道，要扩成 3 通道
         recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
@@ -141,10 +146,5 @@ class VAETrainer(pl.LightningModule):
     def configure_optimizers(self):
         return self.opt(self.parameters(), **self.opt_params)
     
-    def on_validation_epoch_end(self):
-        fid_score = self.fid_metric.compute().item()
-        self.log("val_fid", fid_score, prog_bar=True)
-        self.logger.experiment.log({"val_fid": fid_score})
-        self.fid_metric.reset()
 
 
