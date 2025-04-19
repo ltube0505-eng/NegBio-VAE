@@ -15,7 +15,8 @@ from torchvision import datasets
 import wandb as wdb
 from model import GenericVAE
 from utils import (build_decoder, build_encoder, find_last_contiguous_zeros,
-                   get_overdispersion_index, log_latent_mean_vs_var)
+                   get_overdispersion_index, log_latent_mean_vs_var, plot_fano,
+                   spike_count_hist)
 
 
 class VAETrainer(pl.LightningModule):
@@ -135,7 +136,7 @@ class VAETrainer(pl.LightningModule):
         self.fid_metric.update(real_imgs, real=True)
         self.fid_metric.update(recon_imgs, real=False)
 
-        if batch_idx % 20 == 0:
+        if batch_idx % 50 == 0:
             fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
             fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
             self.logger.experiment.log({
@@ -145,45 +146,39 @@ class VAETrainer(pl.LightningModule):
             log_latent_mean_vs_var(
                 logger=self.logger.experiment, 
                 z=z, 
+                save_dir=None,
                 step_name=f"val_epoch_{self.current_epoch}", 
-                caption="Latent mean vs var"
+                caption="Latent mean vs var",
+                savelocal=False
             )
         
         return loss
     
     def on_validation_epoch_end(self):
-        if len(self._val_kl_diags) > 0:
-            kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()  # shape: [latent_dim]
-            dead_mask = self.find_dead_neurons(kl=kl_diag)
-            # z_all = torch.cat(self._val_latents, dim=0)
 
-            # if self.current_epoch == self.trainer.max_epochs - 1:
-            #     log_latent_mean_vs_var(
-            #         logger=self.logger.experiment,
-            #         z=z_all,
-            #         step_name=f"val_epoch_{self.current_epoch}",
-            #         caption="Latent mean vs variance"
-            #     )
+        if self.current_epoch % 20 ==0 or self.current_epoch == self.trainer.max_epochs - 1:
+            if len(self._val_kl_diags) > 0:
+                kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()  # shape: [latent_dim]
+                dead_mask = self.find_dead_neurons(kl=kl_diag)
 
-            self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
-            self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
-
-            # self.log_dead_neurons_diagnostics(
-            #     kl_diag=kl_diag,
-            #     dead_mask=dead_mask,
-            #     step_name=f"val_epoch_{self.current_epoch}"
-            # )
-        else:
-            print("[Warning] No KL diagnostics found for this epoch.")
-        
-        #self._val_latents = []
-        # self._val_kl_diags = []   # empty the kl_diags
-        
-        fid_score = self.fid_metric.compute().item()
-        self.log("val_fid", fid_score, prog_bar=True)
-        self.logger.experiment.log({"val_fid": fid_score})
-        self.fid_metric.reset()
-        
+                self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
+                self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
+                self.log_dead_neurons_diagnostics(
+                    kl_diag=kl_diag,
+                    dead_mask=dead_mask,
+                    step_name=f"val_epoch_{self.current_epoch}"
+                )
+            else:
+                print("[Warning] No KL diagnostics found for this epoch.")
+            
+            #self._val_latents = []
+            # self._val_kl_diags = []   # empty the kl_diags
+            
+            fid_score = self.fid_metric.compute().item()
+            self.log("val_fid", fid_score, prog_bar=True)
+            self.logger.experiment.log({"val_fid": fid_score})
+            self.fid_metric.reset()
+            
     def configure_optimizers(self):
         return self.opt(self.parameters(), **self.opt_params)
     
@@ -213,7 +208,6 @@ class VAETrainer(pl.LightningModule):
             return self.model.find_dead_neurons(2)
         
         if enc_type == 'linear' and hasattr(self.model, 'find_dead_neurons'):
-            print(2)
             dead = self.model.find_dead_neurons(8)
             order = np.argsort(kl)
             idx = np.argmax(~dead[order])
@@ -250,16 +244,27 @@ class VAETrainer(pl.LightningModule):
         plt.close(fig)
 
     def on_fit_end(self):
+
+        # Build save dirs
+        save_dirs = {
+            "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
+            "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
+            "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
+            "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
+        }
+
+        for path in save_dirs.values():
+            os.makedirs(path, exist_ok=True)
+
         if len(self._val_latents) > 0:
             all_z = torch.cat(self._val_latents, dim=0).numpy()
-            save_dir = os.path.join(self.logger.save_dir, "latents",self.logger.experiment.name )
-            os.makedirs(save_dir, exist_ok=True)
-            np.save(os.path.join(save_dir, "val_z_all.npy"), all_z)
-            print(f"[✔] Saved all validation z to {os.path.join(save_dir, 'val_z_all.npy')}")
+            np.save(os.path.join(save_dirs["latents"], "val_z_all.npy"), all_z)
+            print(f"[✔] Saved all validation z")
         else:
             print("[⚠] No validation z collected to save.")
 
 
+        # ===== Overdispersion index & mean-var scatter =====
         overdispersion_index = get_overdispersion_index(all_z)
         self.logger.experiment.log({
             "final_overdispersion_index": overdispersion_index
@@ -268,9 +273,18 @@ class VAETrainer(pl.LightningModule):
         log_latent_mean_vs_var(
             logger=self.logger.experiment,
             z=all_z,
+            save_dir=save_dirs['meanvar'],
             step_name="final",
             caption="Latent Mean vs Variance"
         )
+
+        #===== Fano plot=================
+        plot_fano(all_z, save_dirs["fano"],self.logger)
+
+        #===== Hist plot==================
+        spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
+
+        # ===== Dead units and KL diagnostic =====
 
         kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
         dead_mask = self.find_dead_neurons(kl=kl_diag)

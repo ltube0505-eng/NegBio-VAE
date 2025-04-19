@@ -2,7 +2,9 @@ from typing import *
 
 import matplotlib.pyplot as plt
 import numpy as np
+import seaborn as sns
 
+import wandb as wdb
 from architecture import *
 
 
@@ -47,7 +49,12 @@ def build_decoder(cfg):
         raise ValueError(f"Unsupported decoder type: {name}")
     
 
-def log_latent_mean_vs_var(logger, z, step_name = "val", caption = "Latent mean vs variance"):
+def log_latent_mean_vs_var(logger, 
+                           z, 
+                           save_dir, 
+                           step_name = "val", 
+                           caption = "Latent mean vs variance",
+                           savelocal = True):
     if isinstance(z, torch.Tensor):
         z_mean = z.mean(dim=0).cpu()
         z_var = z.var(dim=0).cpu()
@@ -65,10 +72,12 @@ def log_latent_mean_vs_var(logger, z, step_name = "val", caption = "Latent mean 
     ax.plot([0, z_mean.max()], [0, z_mean.max()], 'r--', label='Poisson (mean=var)')
     ax.set_xlabel('Mean of $z_i$')
     ax.set_ylabel('Variance of $z_i$')
-    ax.set_title(f'[{step_name}] Latent Mean vs Variance')
+    ax.set_title('Latent Mean vs Variance')
     ax.legend()
     plt.tight_layout()
-
+    if savelocal is True:
+        mean_var_path = os.path.join(save_dir, "mean_var.pdf")
+        fig.savefig(mean_var_path)
     logger.log({
         "latent_mean_vs_var": wdb.Image(fig, caption=caption),
     })
@@ -141,3 +150,65 @@ def find_critical_ids(mask: np.ndarray):
 
 
 
+
+def plot_fano(z, save_dir, logger):
+    if isinstance(z, torch.Tensor):
+        z_mean = z.mean(dim=0).cpu()
+        z_var = z.var(dim=0).cpu()
+    else:
+        z_mean = np.mean(z, axis=0)
+        z_var = np.var(z, axis=0)
+
+
+    fano_factors = z_var / (z_mean + 1e-8)
+
+    fano_fig = plt.figure(figsize=(6, 4))
+    sns.histplot(fano_factors, bins=20, kde=True, color='skyblue')
+    plt.axvline(1.0, color='red', linestyle='--', label='Poisson baseline (Fano=1)')
+    plt.title('Fano Factor Distribution across Latent Units')
+    plt.xlabel('Fano Factor')
+    plt.ylabel('Number of Latent Units')
+    plt.legend()
+    plt.tight_layout()
+    fano_path = os.path.join(save_dir, "fano_factor_hist.pdf")
+    fano_fig.savefig(fano_path)
+    plt.close(fano_fig)
+
+    logger.experiment.log({
+        "fano_factor_hist": wdb.Image(fano_fig, caption = "Fano Factor Distribution across Latent Units")
+    })
+    
+
+
+
+def spike_count_hist(z, save_dir, logger, top_k = 3):
+    # Select top-k latent units by variance
+    if isinstance(z, torch.Tensor):
+        z_mean = z.mean(dim=0).cpu()
+        z_var = z.var(dim=0).cpu()
+    else:
+        z_mean = np.mean(z, axis=0)
+        z_var = np.var(z, axis=0)
+
+    selected_units = np.argsort(z_var)[-top_k:][::-1]  # descending order
+    selected_units = [0, 10, 25] if z.shape[1] >= 26 else list(range(min(3, z.shape[1])))
+
+    spike_fig, axs = plt.subplots(1, len(selected_units), figsize=(12, 4))
+    for i, idx in enumerate(selected_units):
+        unit_counts = z[:, idx]
+        sns.histplot(unit_counts, bins=range(0, int(unit_counts.max()) + 2),
+                     stat='probability', kde=False, ax=axs[i],
+                     color='steelblue', edgecolor='black')
+        axs[i].set_title(f'Latent Unit {idx}')
+        axs[i].set_xlabel('Spike Count')
+        axs[i].set_ylabel('Probability')
+        axs[i].set_xlim(left=0)
+    plt.suptitle('Spike Count Distributions for Selected Latent Units')
+    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
+    spike_hist_path = os.path.join(save_dir, "spike_count_histograms.pdf")
+    spike_fig.savefig(spike_hist_path)
+    plt.close(spike_fig)
+
+    logger.experiment.log({
+        "spike_count_histograms": wdb.Image(spike_fig)
+    })
