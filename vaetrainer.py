@@ -239,7 +239,7 @@ class VAETrainer(pl.LightningModule):
         plt.tight_layout()
 
         self.logger.experiment.log({
-            f"{step_name}_kl_per_dim": wdb.Image(fig, caption="KL per latent dim (red = dead)"),
+            f"kl_per_dim": wdb.Image(fig, caption="KL per latent dim (red = dead)"),
         })
         plt.close(fig)
 
