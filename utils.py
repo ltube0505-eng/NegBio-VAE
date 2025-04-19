@@ -48,8 +48,16 @@ def build_decoder(cfg):
     
 
 def log_latent_mean_vs_var(logger, z, step_name = "val", caption = "Latent mean vs variance"):
-    z_mean = z.mean(dim=0).cpu()
-    z_var = z.var(dim=0).cpu()
+    if isinstance(z, torch.Tensor):
+        z_mean = z.mean(dim=0).cpu()
+        z_var = z.var(dim=0).cpu()
+    else:
+        z_mean = np.mean(z, axis=0)
+        z_var = np.var(z, axis=0)
+
+
+    # z_mean = z.mean(dim=0).cpu()
+    # z_var = z.var(dim=0).cpu()
 
     # Plot mean vs var
     fig, ax = plt.subplots(figsize=(5, 5))
@@ -68,8 +76,15 @@ def log_latent_mean_vs_var(logger, z, step_name = "val", caption = "Latent mean 
 
 
 def get_overdispersion_index(z, eps=1e-8):
-    z_mean = z.mean(dim=0).cpu()
-    z_var = z.var(dim=0).cpu()
+    if isinstance(z, torch.Tensor):
+        z_mean = z.mean(dim=0).cpu()
+        z_var = z.var(dim=0).cpu()
+    else:
+        z_mean = np.mean(z, axis=0)
+        z_var = np.var(z, axis=0)
+
+    # z_mean = z.mean(dim=0).cpu()
+    # z_var = z.var(dim=0).cpu()
 
     overdispersion_index = ((z_var + eps) / (z_mean + eps)).mean().item()
 

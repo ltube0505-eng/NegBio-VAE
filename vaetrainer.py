@@ -48,6 +48,7 @@ class VAETrainer(pl.LightningModule):
         self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True)
         self.log_images = cfg.get('eval', {}).get('log_images', True)
         self._val_kl_diags = []
+        self._val_latents = []
 
     def setup(self, stage = None):
         if hasattr(self.trainer.datamodule, 'train_steps_per_epoch'):
@@ -130,11 +131,11 @@ class VAETrainer(pl.LightningModule):
         recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
 
         self._val_kl_diags.append(kl_diag.detach().cpu()) 
-
+        self._val_latents.append(z.detach().cpu())
         self.fid_metric.update(real_imgs, real=True)
         self.fid_metric.update(recon_imgs, real=False)
 
-        if batch_idx % 10 == 0:
+        if batch_idx % 20 == 0:
             fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
             fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
             self.logger.experiment.log({
@@ -154,19 +155,29 @@ class VAETrainer(pl.LightningModule):
         if len(self._val_kl_diags) > 0:
             kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()  # shape: [latent_dim]
             dead_mask = self.find_dead_neurons(kl=kl_diag)
+            # z_all = torch.cat(self._val_latents, dim=0)
+
+            # if self.current_epoch == self.trainer.max_epochs - 1:
+            #     log_latent_mean_vs_var(
+            #         logger=self.logger.experiment,
+            #         z=z_all,
+            #         step_name=f"val_epoch_{self.current_epoch}",
+            #         caption="Latent mean vs variance"
+            #     )
 
             self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
             self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
 
-            self.log_dead_neurons_diagnostics(
-                kl_diag=kl_diag,
-                dead_mask=dead_mask,
-                step_name=f"val_epoch_{self.current_epoch}"
-            )
+            # self.log_dead_neurons_diagnostics(
+            #     kl_diag=kl_diag,
+            #     dead_mask=dead_mask,
+            #     step_name=f"val_epoch_{self.current_epoch}"
+            # )
         else:
             print("[Warning] No KL diagnostics found for this epoch.")
-
-        self._val_kl_diags = []   # empty the kl_diags
+        
+        #self._val_latents = []
+        # self._val_kl_diags = []   # empty the kl_diags
         
         fid_score = self.fid_metric.compute().item()
         self.log("val_fid", fid_score, prog_bar=True)
@@ -237,6 +248,46 @@ class VAETrainer(pl.LightningModule):
             f"{step_name}_kl_per_dim": wdb.Image(fig, caption="KL per latent dim (red = dead)"),
         })
         plt.close(fig)
+
+    def on_fit_end(self):
+        if len(self._val_latents) > 0:
+            all_z = torch.cat(self._val_latents, dim=0).numpy()
+            save_dir = os.path.join(self.logger.save_dir, "latents",self.logger.experiment.name )
+            os.makedirs(save_dir, exist_ok=True)
+            np.save(os.path.join(save_dir, "val_z_all.npy"), all_z)
+            print(f"[✔] Saved all validation z to {os.path.join(save_dir, 'val_z_all.npy')}")
+        else:
+            print("[⚠] No validation z collected to save.")
+
+
+        overdispersion_index = get_overdispersion_index(all_z)
+        self.logger.experiment.log({
+            "final_overdispersion_index": overdispersion_index
+        })
+
+        log_latent_mean_vs_var(
+            logger=self.logger.experiment,
+            z=all_z,
+            step_name="final",
+            caption="Latent Mean vs Variance"
+        )
+
+        kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
+        dead_mask = self.find_dead_neurons(kl=kl_diag)
+
+        self.log_dead_neurons_diagnostics(
+                kl_diag=kl_diag,
+                dead_mask=dead_mask,
+                step_name=f"val_epoch_{self.current_epoch}"
+            )
+
+
+
+
+
+
+
+        
 
 
 
