@@ -11,7 +11,7 @@ from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import datasets
 
 import wandb as wdb
-from architecture_utils import Conv2D, Linear, _build_conv_enc
+from architecture_utils import Conv2D, Linear, _build_conv_enc, ResDenseLayer, get_act_fn
 
 # class LinearEncoder(nn.Module):
 #     def __init__(self, input_dim=784, latent_dim=128):
@@ -81,7 +81,29 @@ class ConvEncoder(nn.Module):
         return self.fc(x)
     
 
+class MLPEncoder(nn.Module):
+    def __init__(
+            self, input_dim: int = 784,
+            latent_dim: int = 128,
+            expand: int = 8,
+            normalize: bool = False,
+            normalize_dim: int = 0,
+            bias: bool = False,
+        ):
+        super().__init__()
+        self.net = nn.Sequential(
+            ResDenseLayer(input_dim, expand=expand),
+            Linear(
+                in_features=input_dim,
+                out_features=latent_dim,
+                normalize=normalize,
+                normalize_dim=normalize_dim,
+                bias=bias,
+            ),
+        )
 
+    def forward(self, x):
+        return self.net(x.view(x.size(0), -1))
 
     
 # class LinearDecoder(nn.Module):
@@ -134,6 +156,33 @@ class ConvDecoder(nn.Module):
         return x
     
 
+class MLPDecoder(nn.Module):
+    def __init__(
+            self,
+            latent_dim: int = 128,
+            output_dim: int = 784,
+            normalize: bool = False,
+            normalize_dim: int = 0,
+            bias: bool = False,
+            activation_fn: str = "swish",
+        ):
+        super().__init__()
+        self.net = nn.Sequential(
+            Linear(
+                in_features=latent_dim,
+                out_features=output_dim,
+                normalize=normalize,
+                normalize_dim=normalize_dim,
+                bias=bias,
+            ),
+            get_act_fn(activation_fn),
+            ResDenseLayer(output_dim),
+            get_act_fn(activation_fn),
+            nn.Linear(in_features=output_dim, out_features=output_dim, bias=True),
+        )
+
+    def forward(self, z):
+        return self.net(z)
 
 # class ConvDecoder(nn.Module):
 #     def __init__(self, latent_dim=128, n_ch=32, normalize=False, bias=True):

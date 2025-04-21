@@ -26,6 +26,14 @@ def build_encoder(cfg):
         #                    cfg['dataset']['name'], 
         #                    latent_dim=128, 
         #                    n_ch=32)
+    elif name == 'mlp':
+          return MLPEncoder(
+                input_dim=encoder_cfg.get('input_dim', 784),
+                latent_dim=latent_dim,
+                expand=encoder_cfg.get('expand', 32),
+                normalize=encoder_cfg.get('normalize', False),
+                bias=encoder_cfg.get('bias', False),
+          )
     else:
         raise ValueError(f"Unsupported encoder type: {name}")
 
@@ -45,6 +53,14 @@ def build_decoder(cfg):
         )
     elif name == 'conv':
         return ConvDecoder(latent_dim=latent_dim)
+    elif name == 'mlp':
+          return MLPDecoder(
+                latent_dim=latent_dim,
+                output_dim=decoder_cfg.get('output_dim', 784),
+                normalize=decoder_cfg.get('normalize', False),
+                bias=decoder_cfg.get('bias', False),
+                activation_fn=decoder_cfg.get('activation_fn', 'swish'),
+          )
     else:
         raise ValueError(f"Unsupported decoder type: {name}")
     
