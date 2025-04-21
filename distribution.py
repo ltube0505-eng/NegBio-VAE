@@ -96,17 +96,37 @@ class GammaSampler:
         z = indicator.sum(0).float()
         return z
     
-    def linear_decoder_exact_recon_loss(self, x, phi, eps=1e-6):
-        mean_z = self.r * (1 - self.p) / self.p
-        mu = mean_z @ phi.T
-
+    def linear_decoder_exact_recon_loss(self, x, phi, alpha = 0.1, eps=1e-6):
+        # mean_z = self.r * (1 - self.p) / self.p
+        # mu = mean_z @ phi.T
+        mu = (self.mean @ phi.T).clamp_min(eps) 
+        r = 1.0 / alpha
         log_prob = (
-            torch.lgamma(x + self.r) - torch.lgamma(self.r) - torch.lgamma(x + 1)
-            + self.r * torch.log(self.r / (self.r + mu))
-            + x * torch.log(mu / (self.r + mu))
+            torch.lgamma(x + r) - torch.lgamma(r) - torch.lgamma(x + 1)
+            + r * torch.log(r / (r + mu))
+            + x * torch.log(mu / (r + mu))
         )
 
         return -log_prob.sum(dim=1).mean()
+    
+
+    def kl_mc(self, log_r_prior, logit_p_prior, num_samples=1):
+        r_q, p_q = self.r, self.p
+        r_p = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+        p_p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
+
+        rate_q = (1 - p_q) / p_q
+        rate_p = (1 - p_p) / p_p
+
+        q_dist = torch.distributions.Gamma(r_q, rate_q)
+        p_dist = torch.distributions.Gamma(r_p, rate_p)
+
+        samples = q_dist.rsample((num_samples,))  # [S, B, L]
+        log_q = q_dist.log_prob(samples)
+        log_p = p_dist.log_prob(samples)
+
+        kl = (log_q - log_p).mean(dim=0).sum(dim=-1).mean()
+        return kl
 
 
 class GumbelSampler(nn.Module):
@@ -136,6 +156,28 @@ class GumbelSampler(nn.Module):
 
         z = (y * self.count_range.to(rate.device)).sum(-1)
         return z
+    
+    def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
+        # Construct approximate categorical distributions from softmax
+        r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+        p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
+        q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))
+
+        # For Gamma-derived prior rate
+        gamma_rate = (1 - p) / p
+        rate = torch.distributions.Gamma(r, gamma_rate).rsample().unsqueeze(-1)
+        k = self.count_range.view(1, 1, -1)
+        log_pmf_prior = k * rate.log() - rate - torch.lgamma(k + 1)
+
+        # Soft categorical from q
+        # forward() returns y [B, L, max_count]
+        with torch.no_grad():
+            y = self.forward(log_r_prior, logit_p_post, hard=False)  # softmax logits
+            probs = F.softmax(y.unsqueeze(-1) * self.count_range.to(y.device), dim=-1)  # [B, max_count]
+
+        # Soft KL: q * (log q - log p)
+        kl = (probs * (probs.log() - log_pmf_prior)).sum(dim=-1).mean()
+        return kl
 
 
 class NegBinomial(nn.Module):
@@ -170,6 +212,14 @@ class NegBinomial(nn.Module):
         ab = p * q_p
         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
         return r * term
+    
+    def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
+        if self.reparam_type == "gamma":
+            return self.strategy.kl_mc(log_r_prior, logit_p_prior, num_samples=num_samples)
+        elif self.reparam_type == "gumbel":
+            return self.strategy.kl_mc(log_r_prior, logit_p_prior, logit_p_post, num_samples=num_samples)
+        else:
+            raise NotImplementedError(f"No KL_MC implemented for reparam_type: {self.reparam_type}")
     
     def linear_decoder_exact_recon_loss(self, *args, **kwargs):
         return self.strategy.linear_decoder_exact_recon_loss(*args, **kwargs)

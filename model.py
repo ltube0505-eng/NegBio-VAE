@@ -63,18 +63,21 @@ class GenericVAE(nn.Module):
         # return dist.linear_decoder_exact_recon_loss(
         #     x, phi=self.decode.fc_dec.get_weight()
         # )
-    
         mean = dist.mean
         var = dist.variance
 
         phi = self.decode.fc_dec.get_weight()
         a = phi.pow(2).sum(0)
 
-        mean_y = self.decode(mean)
-
-        mse = x - mean_y
+        mse = x - mean @ phi.T
         mse = mse.pow(2).sum(1)
         recon_loss = mse + var @ a
+
+        # mean_y = self.decode(mean)
+
+        # mse = x - mean_y
+        # mse = mse.pow(2).sum(1)
+        # recon_loss = mse + var @ a
 
         return recon_loss.mean()
         
