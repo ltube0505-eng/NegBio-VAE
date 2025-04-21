@@ -13,6 +13,8 @@ model:
   reparam_type: "gamma"       # "gumbel" or "gamma"
   max_count: 30
   tau: 1.0
+  loss_method: "mc"
+  kl: "mc"                  # mc or analytical
 
 # ===============================
 # Encoder configuration
