@@ -25,6 +25,15 @@ class Poisson:
         ) + 1e-6
         self.n_trials = int(math.ceil(max(self.rate.max().item(),1)*5)) # a large enough number of trials to sample from
         self.t = t
+
+    @property
+    def mean(self):
+        return self.rate
+
+    @property
+    def variance(self):
+        return self.rate
+    
     def rsample(self, hard: bool = False):
         x = torch.distributions.Exponential(self.rate).rsample((self.n_trials,))  # inter-event times
         times = torch.cumsum(x, dim=0)  # arrival times of events
@@ -40,8 +49,17 @@ class Poisson:
         logdr = du #log of the modulation of prior rate
         return r-rdr+rdr*logdr
     
+    def linear_decoder_exact_recon_loss(self, x, phi):
+        mean = self.rate
+        var = self.rate
 
+        a = phi.pow(2).sum(0)
 
+        mse = x - mean @ phi.T
+        mse = mse.pow(2).sum(1)
+        recon_loss = mse + var @ a
+
+        return recon_loss.mean()
 
 
 class GammaSampler:
@@ -50,14 +68,26 @@ class GammaSampler:
 
     def __call__(self, log_r, logit_p, hard=False):
         return self.rsample(log_r, logit_p, hard)
+    
+    @property
+    def mean(self):
+        return self.r * (1 - self.p) / self.p
+
+    @property
+    def variance(self):
+        return self.r * (1 - self.p) / (self.p ** 2)
 
     def rsample(self, log_r, logit_p, hard=False):
         r = torch.exp(log_r.clamp(None, 5)) + 1e-6
         p = torch.sigmoid(logit_p.clamp(-5, 5))
+
+        self.r = r
+        self.p = p
+
         gamma_scale = (1 - p) / p
-        rate = torch.distributions.Gamma(r, gamma_scale).rsample()
-        # n_trials = min(int(math.ceil(max(rate.max().item(), 1) * 5)), 826)
-        n_trials = 826
+        rate = torch.distributions.Gamma(r, gamma_scale).rsample() + 1e-6
+        n_trials = min(int(math.ceil(max(rate.max().item(), 1) * 5)), 826)
+        # n_trials = 826
         x = torch.distributions.Exponential(rate).rsample((n_trials,))
         times = torch.cumsum(x, dim=0)
         indicator = times < 1.0
@@ -65,6 +95,18 @@ class GammaSampler:
             indicator = torch.sigmoid((1.0 - times) / self.t)
         z = indicator.sum(0).float()
         return z
+    
+    def linear_decoder_exact_recon_loss(self, x, phi, eps=1e-6):
+        mean_z = self.r * (1 - self.p) / self.p
+        mu = mean_z @ phi.T
+
+        log_prob = (
+            torch.lgamma(x + self.r) - torch.lgamma(self.r) - torch.lgamma(x + 1)
+            + self.r * torch.log(self.r / (self.r + mu))
+            + x * torch.log(mu / (self.r + mu))
+        )
+
+        return -log_prob.sum(dim=1).mean()
 
 
 class GumbelSampler(nn.Module):
@@ -106,6 +148,14 @@ class NegBinomial(nn.Module):
             self.strategy = GumbelSampler(max_count=max_count, tau=tau)
         else:
             raise ValueError(f"Unsupported reparam_type: {reparam_type}")
+        
+    @property
+    def mean(self):
+        return self.strategy.mean
+
+    @property
+    def variance(self):
+        return self.strategy.variance
 
     def rsample(self, log_r, logit_p, t=0.0, hard=False):
         if self.reparam_type == "gamma":
@@ -121,6 +171,8 @@ class NegBinomial(nn.Module):
         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
         return r * term
     
+    def linear_decoder_exact_recon_loss(self, *args, **kwargs):
+        return self.strategy.linear_decoder_exact_recon_loss(*args, **kwargs)
 
 # class NegBinomial_Gamma:
 #     def __init__(self, log_rate, logit_p, t=0.0):

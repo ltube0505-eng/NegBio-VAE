@@ -56,6 +56,28 @@ class GenericVAE(nn.Module):
         else:
             raise NotImplementedError
         
+    def mc_loss(self, x, y):
+        return ((y - x)**2).sum(-1).mean()
+    
+    def exact_loss(self, x, dist):
+        # return dist.linear_decoder_exact_recon_loss(
+        #     x, phi=self.decode.fc_dec.get_weight()
+        # )
+    
+        mean = dist.mean
+        var = dist.variance
+
+        phi = self.decode.fc_dec.get_weight()
+        a = phi.pow(2).sum(0)
+
+        mean_y = self.decode(mean)
+
+        mse = x - mean_y
+        mse = mse.pow(2).sum(1)
+        recon_loss = mse + var @ a
+
+        return recon_loss.mean()
+        
     def forward(self, x):
         validation = not torch.is_grad_enabled()
 
