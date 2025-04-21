@@ -25,6 +25,15 @@ class Poisson:
         ) + 1e-6
         self.n_trials = int(math.ceil(max(self.rate.max().item(),1)*5)) # a large enough number of trials to sample from
         self.t = t
+
+    @property
+    def mean(self):
+        return self.rate
+
+    @property
+    def variance(self):
+        return self.rate
+
     def rsample(self, hard: bool = False):
         x = torch.distributions.Exponential(self.rate).rsample((self.n_trials,))  # inter-event times
         times = torch.cumsum(x, dim=0)  # arrival times of events
@@ -39,9 +48,18 @@ class Poisson:
         rdr = self.rate #final rate is rdr
         logdr = du #log of the modulation of prior rate
         return r-rdr+rdr*logdr
-    
 
+    def linear_decoder_exact_recon_loss(self, x, phi):
+        mean = self.rate
+        var = self.rate
 
+        a = phi.pow(2).sum(0)
+
+        mse = x - mean @ phi.T
+        mse = mse.pow(2).sum(1)
+        recon_loss = mse + var @ a
+
+        return recon_loss.mean()
 
 
 class GammaSampler:
@@ -50,6 +68,14 @@ class GammaSampler:
 
     def __call__(self, log_r, logit_p, hard=False):
         return self.rsample(log_r, logit_p, hard)
+
+    @property
+    def mean(self):
+        return self.r * (1 - self.p) / self.p
+
+    @property
+    def variance(self):
+        return self.r * (1 - self.p) / (self.p ** 2)
 
     def rsample(self, log_r, logit_p, hard=False):
         self.r = torch.exp(log_r.clamp(None, 5)) + 1e-6
@@ -65,7 +91,7 @@ class GammaSampler:
             indicator = torch.sigmoid((1.0 - times) / self.t)
         z = indicator.sum(0).float()
         return z
-    
+
     def kl_mc(self, log_r_prior, logit_p_prior, num_samples=1):
         r_q, p_q = self.r, self.p
         r_p = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
@@ -112,7 +138,7 @@ class GumbelSampler(nn.Module):
 
         z = (y * self.count_range.to(rate.device)).sum(-1)
         return z
-    
+
     def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
         # Construct approximate categorical distributions from softmax
         r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
@@ -147,6 +173,14 @@ class NegBinomial(nn.Module):
         else:
             raise ValueError(f"Unsupported reparam_type: {reparam_type}")
 
+    @property
+    def mean(self):
+        return self.strategy.mean
+
+    @property
+    def variance(self):
+        return self.strategy.variance
+
     def rsample(self, log_r, logit_p, t=0.0, hard=False):
         if self.reparam_type == "gamma":
             self.strategy.t = t  # update t on the fly
@@ -160,7 +194,7 @@ class NegBinomial(nn.Module):
         ab = p * q_p
         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
         return r * term
-    
+
     def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
         if self.reparam_type == "gamma":
             return self.strategy.kl_mc(log_r_prior, logit_p_prior, num_samples=num_samples)
@@ -198,27 +232,27 @@ class NegBinomial(nn.Module):
 #         ab = p * q_p
 #         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
 #         return r * term
-    
+
 
 # class NegBinomial(nn.Module):
-#     def __init__(self, 
-#                  reparam_type = "gamma", 
-#                  max_count = 15, 
+#     def __init__(self,
+#                  reparam_type = "gamma",
+#                  max_count = 15,
 #                  tau=1.0,):
 #         super().__init__()
-#         self.tau = tau 
-#         self.max_count = max_count 
+#         self.tau = tau
+#         self.max_count = max_count
 #         self.reparam_type = reparam_type
-    
+
 #         if self.reparam_type == "gumbel":
 #             self.gumbel_module = GumbelNegBinomial(
-#                 max_count=max_count, 
+#                 max_count=max_count,
 #                 tau=tau
 #             )
-         
+
 #         elif reparam_type != "gamma":
 #             raise ValueError(f"Unknown reparam_type: {reparam_type}")
-        
+
 
 
 #     def rsample(self, log_r, logit_p, t= 0.0, hard: bool = False):
@@ -236,14 +270,14 @@ class NegBinomial(nn.Module):
 #                 indicator = torch.sigmoid((1.0 - times) / t)
 #             z = indicator.sum(0).float()
 #             return z
-    
+
 #         elif self.reparam_type == "gumbel":
 #             gamma_scale = (1 - p) / p
 #             rate = torch.distributions.Gamma(r, gamma_scale).rsample()
 #             z = self.gumbel_module(rate, hard=hard)
 #             return z
-        
-                
+
+
 #     def kl(self, log_r_prior, logit_p_prior, logit_p_post):
 #         r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
 #         p = torch.sigmoid(logit_p_prior.clamp(-5, 5))  # prior p
@@ -252,12 +286,12 @@ class NegBinomial(nn.Module):
 #         ab = p * q_p
 #         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
 #         return r * term
-    
+
 
 
 # class GumbelNegBinomial(nn.Module):
-#     def __init__(self, 
-#                  max_count=15, 
+#     def __init__(self,
+#                  max_count=15,
 #                  tau=1.0):
 #         super().__init__()
 #         self.max_count = max_count
@@ -280,7 +314,3 @@ class NegBinomial(nn.Module):
 
 #         z = (y * self.count_range.to(rate.device)).sum(-1)  # [B, D]
 #         return z
-
-
-    
-
