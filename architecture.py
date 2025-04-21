@@ -179,6 +179,7 @@ class MLPDecoder(nn.Module):
             ResDenseLayer(output_dim),
             get_act_fn(activation_fn),
             nn.Linear(in_features=output_dim, out_features=output_dim, bias=True),
+            nn.Sigmoid(),
         )
 
     def forward(self, z):
