@@ -55,9 +55,9 @@ class GammaSampler:
         r = torch.exp(log_r.clamp(None, 5)) + 1e-6
         p = torch.sigmoid(logit_p.clamp(-5, 5))
         gamma_scale = (1 - p) / p
-        rate = torch.distributions.Gamma(r, gamma_scale).rsample()
-        # n_trials = min(int(math.ceil(max(rate.max().item(), 1) * 5)), 826)
-        n_trials = 826
+        rate = torch.distributions.Gamma(r, gamma_scale).rsample() + 1e-6
+        n_trials = min(int(math.ceil(max(rate.max().item(), 1) * 5)), 826)
+        # n_trials = 826
         x = torch.distributions.Exponential(rate).rsample((n_trials,))
         times = torch.cumsum(x, dim=0)
         indicator = times < 1.0
