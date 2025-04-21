@@ -161,6 +161,28 @@ class GumbelSampler(nn.Module):
         kl = (probs * (probs.log() - log_pmf_prior)).sum(dim=-1).mean()
         return kl
 
+    def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
+        # Construct approximate categorical distributions from softmax
+        r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+        p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
+        q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))
+
+        # For Gamma-derived prior rate
+        gamma_rate = (1 - p) / p
+        rate = torch.distributions.Gamma(r, gamma_rate).rsample().unsqueeze(-1)
+        k = self.count_range.view(1, 1, -1)
+        log_pmf_prior = k * rate.log() - rate - torch.lgamma(k + 1)
+
+        # Soft categorical from q
+        # forward() returns y [B, L, max_count]
+        with torch.no_grad():
+            y = self.forward(log_r_prior, logit_p_post, hard=False)  # softmax logits
+            probs = F.softmax(y.unsqueeze(-1) * self.count_range.to(y.device), dim=-1)  # [B, max_count]
+
+        # Soft KL: q * (log q - log p)
+        kl = (probs * (probs.log() - log_pmf_prior)).sum(dim=-1).mean()
+        return kl
+
 
 class NegBinomial(nn.Module):
     def __init__(self, reparam_type="gamma", max_count=15, tau=1.0):
