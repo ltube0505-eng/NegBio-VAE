@@ -97,10 +97,8 @@ class VAETrainer(pl.LightningModule):
         if self.cfg['decoder']['type']=="conv":
             x = batch[0].view(-1, 1, 28, 28)
 
-        if self.cfg["model"].get("loss_method") == "exact":
-            recon_loss = self.model.exact_loss(x, dist)
-        else:
-            recon_loss = self.model.mc_loss(x, y)
+    
+        recon_loss = self.model.mse_loss(x, y)
 
         loss = self.beta*kl + recon_loss 
 
@@ -129,23 +127,18 @@ class VAETrainer(pl.LightningModule):
         if self.cfg['decoder']['type']=="conv":
             x = x.view(-1, 1, 28, 28)
 
-        exact_loss = self.model.exact_loss(x, dist)
-        mc_loss = self.model.mc_loss(x, y)
+        recon_loss = self.model.mse_loss(x, y)
 
-        if self.cfg["model"].get("loss_method") == "exact":
-            val_elbo = exact_loss + kl
-        else:
-            val_elbo = mc_loss + kl
+     
+        val_elbo = recon_loss + kl
 
-        loss = self.beta*kl + exact_loss
+        loss = self.beta*kl + recon_loss
         overdispersion_index = get_overdispersion_index(z)
 
-        self.log('val_exact_loss', exact_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
-        self.log('val_mc_loss', mc_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log('val_recon_loss', recon_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_kl', kl.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_elbo', val_elbo.item(), on_step=True, on_epoch=True, prog_bar=True)
-        self.log('val_elbo_exact', (kl + exact_loss).item(), on_step=True, on_epoch=True, prog_bar=True)
-        self.log('val_elbo_mc', (kl + mc_loss).item(), on_step=True, on_epoch=True, prog_bar=True)
+        self.log('val_elbo_mc', (kl + recon_loss).item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('l0_sparsity', (z == 0).float().mean().item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('overdispersion_index', overdispersion_index, on_step=True, on_epoch=True, prog_bar=True)
 

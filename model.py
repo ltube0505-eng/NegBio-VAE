@@ -56,30 +56,8 @@ class GenericVAE(nn.Module):
         else:
             raise NotImplementedError
         
-    def mc_loss(self, x, y):
+    def mse_loss(self, x, y):
         return ((y - x)**2).sum(-1).mean()
-    
-    def exact_loss(self, x, dist):
-        # return dist.linear_decoder_exact_recon_loss(
-        #     x, phi=self.decode.fc_dec.get_weight()
-        # )
-        mean = dist.mean
-        var = dist.variance
-
-        phi = self.decode.fc_dec.get_weight()
-        a = phi.pow(2).sum(0)
-
-        mse = x - mean @ phi.T
-        mse = mse.pow(2).sum(1)
-        recon_loss = mse + var @ a
-
-        # mean_y = self.decode(mean)
-
-        # mse = x - mean_y
-        # mse = mse.pow(2).sum(1)
-        # recon_loss = mse + var @ a
-
-        return recon_loss.mean()
         
     def forward(self, x):
         validation = not torch.is_grad_enabled()
@@ -93,20 +71,7 @@ class GenericVAE(nn.Module):
 
         elif self.dist_type == "negbio":
             logit_p = self.encode(x).clamp(-5, 5)
-            z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
-        
-            # if self.reparam_type == "gamma":
-            #     # dist = NegBinomial(self.reparam_type, self.max_count, self.tau)
-            #     z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
-            #     #dist = NegBinomial_Gamma(self.log_r_prior, logit_p, self.t)
-            #     #z = dist.rsample(hard=validation)
-            # elif self.reparam_type == "gumbel":
-            #     #dist = NegBinomial(self.reparam_type, self.max_count, self.tau)
-            #     z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)
-            #     # print(z[0, :10])
-
-            # # print(f"[Gumbel] z mean: {z.mean().item():.2f}, std: {z.std().item():.2f}")
-             
+            z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)             
             y = self.decode(z)
             return self.dist_class, logit_p, z, y
         
@@ -134,7 +99,7 @@ class GenericVAE(nn.Module):
             bins=bins,
         ) - 1
 
-        idx = find_last_contiguous_zeros(  # 🔴 <== YOU NEED TO DEFINE THIS
+        idx = find_last_contiguous_zeros( 
             mask=hist[:median_idx] > 0,
             w=len(log_norms) * 2,
         )
@@ -147,7 +112,7 @@ class GenericVAE(nn.Module):
             num=len(log_norms) // frac
         )
         hist, _ = np.histogram(log_norms, bins=bins)
-        i, j = find_critical_ids(hist > 0)  # 🔴 <== YOU NEED TO DEFINE THIS
+        i, j = find_critical_ids(hist > 0)  
 
         dead2 = np.logical_or(
             log_norms < bins[i],
