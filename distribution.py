@@ -92,7 +92,7 @@ class GammaSampler:
         z = indicator.sum(0).float()
         return z
 
-    def kl_mc(self, log_r_prior, logit_p_prior, num_samples=1):
+    def kl_mc(self, log_r_prior, logit_p_prior, num_samples=10):
         r_q, p_q = self.r, self.p
         r_p = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
         p_p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
@@ -103,7 +103,7 @@ class GammaSampler:
         q_dist = torch.distributions.Gamma(r_q, rate_q)
         p_dist = torch.distributions.Gamma(r_p, rate_p)
 
-        samples = q_dist.rsample((num_samples,))  # [S, B, L]
+        samples = q_dist.rsample((num_samples,))  
         log_q = q_dist.log_prob(samples)
         log_p = p_dist.log_prob(samples)
 
@@ -143,16 +143,14 @@ class GumbelSampler(nn.Module):
         # Construct approximate categorical distributions from softmax
         r = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
         p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
-        q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))
-
-        # For Gamma-derived prior rate
+        
+        #q_p = torch.sigmoid(logit_p_post.clamp(-5, 5))
         gamma_rate = (1 - p) / p
         rate = torch.distributions.Gamma(r, gamma_rate).rsample().unsqueeze(-1)
         k = self.count_range.view(1, 1, -1)
         log_pmf_prior = k * rate.log() - rate - torch.lgamma(k + 1)
 
-        # Soft categorical from q
-        # forward() returns y [B, L, max_count]
+
         with torch.no_grad():
             y = self.forward(log_r_prior, logit_p_post, hard=False)  # softmax logits
             probs = F.softmax(y.unsqueeze(-1) * self.count_range.to(y.device), dim=-1)  # [B, max_count]

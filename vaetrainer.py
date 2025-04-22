@@ -15,8 +15,8 @@ from torchvision import datasets
 import wandb as wdb
 from model import GenericVAE
 from utils import (build_decoder, build_encoder, find_last_contiguous_zeros,
-                   get_overdispersion_index, log_latent_mean_vs_var, plot_fano,
-                   spike_count_hist)
+                   get_overdispersion_index, log_dead_neurons_diagnostics,
+                   log_latent_mean_vs_var, plot_fano, spike_count_hist)
 
 
 class VAETrainer(pl.LightningModule):
@@ -177,9 +177,10 @@ class VAETrainer(pl.LightningModule):
 
                 self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
                 self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
-                self.log_dead_neurons_diagnostics(
+                log_dead_neurons_diagnostics(
                     kl_diag=kl_diag,
                     dead_mask=dead_mask,
+                    logger=self.logger,
                     step_name=f"val_epoch_{self.current_epoch}"
                 )
             else:
@@ -239,23 +240,22 @@ class VAETrainer(pl.LightningModule):
 
 
         
-    def log_dead_neurons_diagnostics(self, kl_diag, dead_mask, step_name="val"):
-        fig, ax = plt.subplots(figsize=(6, 4))
-        dims = np.arange(len(kl_diag))
-        kl_vals = kl_diag
+    # def log_dead_neurons_diagnostics(self, kl_diag, dead_mask, step_name="val"):
+    #     fig, ax = plt.subplots(figsize=(6, 4))
+    #     dims = np.arange(len(kl_diag))
+    #     kl_vals = kl_diag
+    #     ax.bar(dims[dead_mask], kl_vals[dead_mask], color="red", label="Dead neuron")
+    #     ax.bar(dims, kl_vals, color="blue", label="KL per dim")
+    #     ax.set_xlabel("Latent Dimension")
+    #     ax.set_ylabel("KL Divergence")
+    #     ax.set_title(f"[{step_name}] KL per latent dim")
+    #     ax.legend()
+    #     plt.tight_layout()
 
-        ax.bar(dims, kl_vals, color="C0", label="KL per dim")
-        ax.bar(dims[dead_mask], kl_vals[dead_mask], color="C3", label="Dead neuron")
-        ax.set_xlabel("Latent Dimension")
-        ax.set_ylabel("KL Divergence")
-        ax.set_title(f"[{step_name}] KL per latent dim")
-        ax.legend()
-        plt.tight_layout()
-
-        self.logger.experiment.log({
-            f"kl_per_dim": wdb.Image(fig, caption="KL per latent dim (red = dead)"),
-        })
-        plt.close(fig)
+    #     self.logger.experiment.log({
+    #         f"kl_per_dim": wdb.Image(fig, caption="KL per latent dim (red = dead)"),
+    #     })
+    #     plt.close(fig)
 
     def on_fit_end(self):
 
@@ -303,9 +303,10 @@ class VAETrainer(pl.LightningModule):
         kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
         dead_mask = self.find_dead_neurons(kl=kl_diag)
 
-        self.log_dead_neurons_diagnostics(
+        log_dead_neurons_diagnostics(
                 kl_diag=kl_diag,
                 dead_mask=dead_mask,
+                logger=self.logger,
                 step_name=f"val_epoch_{self.current_epoch}"
             )
 

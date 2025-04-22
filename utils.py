@@ -228,3 +228,22 @@ def spike_count_hist(z, save_dir, logger, top_k = 3):
     logger.experiment.log({
         "spike_count_histograms": wdb.Image(spike_fig)
     })
+
+
+
+def log_dead_neurons_diagnostics(kl_diag, dead_mask, logger, step_name="val"):
+    fig, ax = plt.subplots(figsize=(6, 4))
+    dims = np.arange(len(kl_diag))
+    kl_vals = kl_diag
+    ax.bar(dims[dead_mask], kl_vals[dead_mask], color="red", label="Dead neuron")
+    ax.bar(dims, kl_vals, color="blue", label="KL per dim")
+    ax.set_xlabel("Latent Dimension")
+    ax.set_ylabel("KL Divergence")
+    ax.set_title(f"[{step_name}] KL per latent dim")
+    ax.legend()
+    plt.tight_layout()
+
+    logger.experiment.log({
+        f"kl_per_dim": wdb.Image(fig, caption="KL per latent dim (red = dead)"),
+    })
+    plt.close(fig)
