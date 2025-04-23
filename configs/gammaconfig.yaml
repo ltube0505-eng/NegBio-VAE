@@ -2,7 +2,7 @@
 # Dataset configuration
 # ===============================
 dataset:
-  name: "MNIST"
+  name: "CIFAR16"
 
 # ===============================
 # Model configuration
@@ -20,7 +20,9 @@ model:
 # ===============================
 encoder:
   type: "linear"                # or "linear"
-  input_dim: 784              # only needed for linear encoder
+  input_dim:                # only needed for linear encoder
+    MNIST: 784
+    CIFAR16: 768
   latent_dim: 128
 
 # ===============================
