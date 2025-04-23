@@ -45,30 +45,39 @@ class ConvEncoder(nn.Module):
                  latent_dim=128, 
                  dataset="MNIST", 
                  use_norm=True, 
-                 bias=True, 
-                 in_channels=1):
+                 bias=True,
+                 in_channels=None,
+                 ):
         super().__init__()
-
+        self.in_channels = 1 if dataset.endswith("MNIST") or dataset == "Omniglot" else 3
+        
         if dataset in ['vH16', 'CIFAR16', 'BALLS16', 'BALLS64']:
             padding = 1
         elif dataset.endswith("MNIST") or dataset == "Omniglot":
-            padding = 0  
+            padding = 0
         else:
             raise ValueError(f"Unknown dataset: {dataset}")
 
+        
         self.net = nn.Sequential(
-            nn.Conv2d(in_channels, 32, kernel_size=4, stride=2, padding=padding),  # [B,32,14,14] or smaller
-            nn.ReLU(),
-            nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=padding),           # [B,64,7,7] or smaller
-            nn.ReLU(),
-            nn.Flatten(),
-        )
-
-        dummy = torch.zeros(1, in_channels, 28, 28)
+                nn.Conv2d(self.in_channels, 32, kernel_size=4, stride=2, padding=padding),  # [B,32,14,14] or smaller
+                nn.ReLU(),
+                nn.Conv2d(32, 64, kernel_size=4, stride=2, padding=padding),           # [B,64,7,7] or smaller
+                nn.ReLU(),
+                nn.Flatten(),
+            )
+        if dataset in ['vH16', 'CIFAR16', 'BALLS16', 'BALLS64']:
+            dummy = torch.zeros(1, self.in_channels, 16, 16)
+        elif dataset.endswith("MNIST") or dataset == "Omniglot":
+            dummy = torch.zeros(1, self.in_channels, 28, 28)
+        else:
+            raise ValueError(f"Unknown dataset: {dataset}")
+        
         with torch.no_grad():
             flat_dim = self.net(dummy).shape[-1]
 
         layers = [nn.Linear(flat_dim, latent_dim)]
+        
         if use_norm:
             layers.append(nn.LayerNorm(latent_dim))
         if not bias:
@@ -77,6 +86,7 @@ class ConvEncoder(nn.Module):
         self.fc = nn.Sequential(*layers)
 
     def forward(self, x):
+        
         x = self.net(x)
         return self.fc(x)
     
@@ -133,14 +143,14 @@ class LinearDecoder(nn.Module):
 
     
 class ConvDecoder(nn.Module):
-    def __init__(self, latent_dim=128, out_channels=1,normalize=True, 
+    def __init__(self, latent_dim=128, out_channels=1,size=7,normalize=True, 
                  normalize_dim=0):
         super().__init__()
-
+        self.size=size
         # Fully connected layer to expand from latent_dim to feature map
         # self.fc_dec = nn.Linear(latent_dim, 128 * 7 * 7)
-        self.fc_dec = Linear(latent_dim, 128 * 7 * 7, normalize=normalize, normalize_dim=normalize_dim)
-
+        self.fc_dec = Linear(latent_dim, 128 * self.size * self.size, normalize=normalize, normalize_dim=normalize_dim)
+    
         # Transposed conv layers to upscale to 28x28
         self.deconv = nn.Sequential(
             nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),  # 7x7 -> 14x14
@@ -150,9 +160,12 @@ class ConvDecoder(nn.Module):
         )
 
     def forward(self, z):
+        #z: 200 128
         x = self.fc_dec(z)  # [B, 128*7*7]
-        x = x.view(-1, 128, 7, 7)  # reshape to [B, 128, 7, 7]
-        x = self.deconv(x)  # [B, 1, 28, 28]
+        #x: 200 6272
+        x = x.view(-1, 128, self.size, self.size)  # reshape to [B, 128, 7, 7]
+        #200 1 28 28
+        x = self.deconv(x)  # [B, 1, 28, 28]3 16 16
         return x
     
 
