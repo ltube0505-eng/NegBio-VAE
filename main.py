@@ -22,6 +22,8 @@ flags.DEFINE_string("model_type", "negbio", "Model type: negbio or poisson")
 flags.DEFINE_string("dataset", "CIFAR16", "dataset name") #CIFAR16 MNIST
 flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
+flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
+flags.DEFINE_integer("max_epochs", 500, "maximum epochs reached")
 
 
 def main(argv):
@@ -57,7 +59,7 @@ def main(argv):
     print(flatten_flag)
 
     if FLAGS.local:
-        dm = MNISTDataModule(data_dir='./Datasets', batch_size=bsize)
+        dm = MNISTDataModule(data_dir='./Datasets', batch_size=FLAGS.bsize_local)
     else:
         dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag)
     
@@ -67,6 +69,16 @@ def main(argv):
     # for name, param in model.named_parameters():
     #     if "logits" in name:
     #         print(f"  ✅ {name}: requires_grad={param.requires_grad}, shape={param.shape}")
+
+    if FLAGS.local:
+        accelerator = "cpu"
+        devices = 1
+        strategy = None  
+    else:
+        accelerator = "gpu"
+        devices = [2, 3]
+        strategy = "ddp"
+
             
     trainer_args = {
     "callbacks": [
@@ -84,17 +96,19 @@ def main(argv):
         "logger": wandb.WandbLogger(project=project_name, name=name, save_code=False),
         "gradient_clip_val": 1.0,
         
-        "accelerator": "gpu",
-        'devices':[2,3],
-        'strategy':"ddp"
+        "accelerator": accelerator,
+        'devices':devices
+        # 'strategy':"ddp" if accelerator == "gpu" else None
     }
+    if strategy is not None:
+        trainer_args["strategy"] = strategy
     trainer_args["logger"].watch(model, log="all")
 
 
     trainer = pl.Trainer(
         **trainer_args,
         default_root_dir=checkpoint_dir,
-        max_epochs=500,
+        max_epochs=FLAGS.max_epochs,
         num_sanity_val_steps=0,
     )
 

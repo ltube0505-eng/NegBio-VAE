@@ -3,6 +3,8 @@ from typing import *
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
+import torch.nn.functional as F
+from torchvision.models import inception_v3
 
 import wandb as wdb
 from architecture import *
@@ -13,10 +15,12 @@ def build_encoder(cfg):
     name = encoder_cfg['type'].lower()
     latent_dim = encoder_cfg.get('latent_dim', 128)
     if name == 'linear':
+        print(encoder_cfg['input_dim'][cfg['datasetname']])
         return LinearEncoder(
             input_dim=encoder_cfg['input_dim'][cfg['datasetname']],
             latent_dim=latent_dim
         )
+    
     elif name == 'conv':
         return ConvEncoder(latent_dim=latent_dim,
                            dataset = cfg['dataset']['name'],
@@ -247,3 +251,35 @@ def log_dead_neurons_diagnostics(kl_diag, dead_mask, logger, step_name="val"):
         f"kl_per_dim": wdb.Image(fig, caption="KL per latent dim (red = dead)"),
     })
     plt.close(fig)
+
+
+
+
+def compute_inception_score(images, batch_size=32, splits=10, device = "cuda"):
+    """
+    images: Tensor of shape [N, 3, H, W] and in range [0, 1]
+    """
+    model = inception_v3(pretrained=True, transform_input=False).eval().to(device)
+    
+    def get_pred(x):
+        with torch.no_grad():
+            x = F.interpolate(x, size=(299, 299), mode='bilinear', align_corners=False)
+            x = model(x)
+            return F.softmax(x, dim=1).cpu().numpy()
+
+    N = images.shape[0]
+    preds = np.zeros((N, 1000))
+    for i in range(0, N, batch_size):
+        batch = images[i:i + batch_size].to(device)
+        preds[i:i + batch_size] = get_pred(batch)
+
+    scores = []
+    for k in range(splits):
+        part = preds[k * (N // splits): (k + 1) * (N // splits)]
+        py = np.mean(part, axis=0)
+        kl = part * (np.log(part + 1e-6) - np.log(py + 1e-6))
+        scores.append(np.exp(np.mean(np.sum(kl, axis=1))))
+    
+    return np.mean(scores), np.std(scores)
+
+
