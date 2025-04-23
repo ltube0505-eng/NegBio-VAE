@@ -19,7 +19,7 @@ warnings.filterwarnings("ignore")
 FLAGS = flags.FLAGS
 flags.DEFINE_string("reparam_type", "gamma", "Model type: gamma or gumbel")
 flags.DEFINE_string("model_type", "negbio", "Model type: negbio or poisson")
-flags.DEFINE_string("dataset", "MNIST", "dataset name")
+flags.DEFINE_string("dataset", "CIFAR16", "dataset name") #CIFAR16 MNIST
 flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 
@@ -48,7 +48,7 @@ def main(argv):
             with open("configs/gumbelconfig.yaml", "r") as f:
                 cfg = yaml.safe_load(f)
 
-    
+    cfg['datasetname'] = FLAGS.dataset
     if cfg['encoder']['type'] == "conv":
         flatten_flag = False
     else:
@@ -80,9 +80,13 @@ def main(argv):
             GumbelMonitorCallback(log_every_n_steps=1)
 
         ],
-        "accelerator": "auto",
+        #"accelerator": "auto",
         "logger": wandb.WandbLogger(project=project_name, name=name, save_code=False),
         "gradient_clip_val": 1.0,
+        
+        "accelerator": "gpu",
+        'devices':[2,3],
+        'strategy':"ddp"
     }
     trainer_args["logger"].watch(model, log="all")
 

@@ -14,7 +14,7 @@ def build_encoder(cfg):
     latent_dim = encoder_cfg.get('latent_dim', 128)
     if name == 'linear':
         return LinearEncoder(
-            input_dim=encoder_cfg.get('input_dim', 784),
+            input_dim=encoder_cfg['input_dim'][cfg['datasetname']],
             latent_dim=latent_dim
         )
     elif name == 'conv':
@@ -28,7 +28,7 @@ def build_encoder(cfg):
         #                    n_ch=32)
     elif name == 'mlp':
           return MLPEncoder(
-                input_dim=encoder_cfg.get('input_dim', 784),
+                input_dim=encoder_cfg['input_dim'][cfg['datasetname']],
                 latent_dim=latent_dim,
                 expand=encoder_cfg.get('expand', 32),
                 normalize=encoder_cfg.get('normalize', False),
@@ -49,14 +49,14 @@ def build_decoder(cfg):
     if name == 'linear':
         return LinearDecoder(
             latent_dim=latent_dim,
-            output_dim=decoder_cfg.get('output_dim', 784)
+            output_dim=cfg['encoder']['input_dim'][cfg['datasetname']]
         )
     elif name == 'conv':
         return ConvDecoder(latent_dim=latent_dim)
     elif name == 'mlp':
           return MLPDecoder(
                 latent_dim=latent_dim,
-                output_dim=decoder_cfg.get('output_dim', 784),
+                output_dim=cfg['encoder']['input_dim'][cfg['datasetname']],
                 normalize=decoder_cfg.get('normalize', False),
                 bias=decoder_cfg.get('bias', False),
                 activation_fn=decoder_cfg.get('activation_fn', 'swish'),
@@ -235,7 +235,7 @@ def log_dead_neurons_diagnostics(kl_diag, dead_mask, logger, step_name="val"):
     fig, ax = plt.subplots(figsize=(6, 4))
     dims = np.arange(len(kl_diag))
     kl_vals = kl_diag
-    ax.bar(dims[dead_mask], kl_vals[dead_mask], color="red", label="Dead neuron")
+    ax.bar(dims[dead_mask], kl_vals[dead_mask], color="red", label="Dead neuron", alpha=0.5)
     ax.bar(dims, kl_vals, color="blue", label="KL per dim")
     ax.set_xlabel("Latent Dimension")
     ax.set_ylabel("KL Divergence")

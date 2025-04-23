@@ -142,8 +142,12 @@ class VAETrainer(pl.LightningModule):
         self.log('l0_sparsity', (z == 0).float().mean().item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('overdispersion_index', overdispersion_index, on_step=True, on_epoch=True, prog_bar=True)
 
-        real_imgs = batch[0].repeat(1, 3, 1, 1)  # MNIST 是 1 通道，要扩成 3 通道
-        recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
+        if self.cfg['datasetname'] == 'MNIST':
+            real_imgs = batch[0].repeat(1, 3, 1, 1)  # MNIST 是 1 通道，要扩成 3 通道
+            recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
+        elif self.cfg['datasetname'] == 'CIFAR16':
+            real_imgs = batch[0].view(-1, 3, 16, 16)
+            recon_imgs = y.view(-1, 3, 16, 16)
 
         self._val_kl_diags.append(kl_diag.detach().cpu()) 
         self._val_latents.append(z.detach().cpu())
@@ -151,8 +155,14 @@ class VAETrainer(pl.LightningModule):
         self.fid_metric.update(recon_imgs, real=False)
 
         if batch_idx % 50 == 0:
-            fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
-            fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
+            if self.cfg['datasetname'] == 'MNIST':
+                fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
+            elif self.cfg['datasetname'] == 'CIFAR16':
+                fig_y = torchvision.utils.make_grid(y.reshape(-1, 3, 16, 16), nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 3, 16, 16), nrow=10)
+            else:
+                raise ValueError(f"Unseen dataset name: {self.cfg['dataset']['name']}")
             self.logger.experiment.log({
                 'recons': wdb.Image(fig_y, caption="recons"),
                 'inputs': wdb.Image(fig_x, caption="inputs"),
@@ -257,15 +267,23 @@ class VAETrainer(pl.LightningModule):
     #     })
     #     plt.close(fig)
 
-    def on_fit_end(self):
+    def on_fit_end(self, end=False):
 
         # Build save dirs
-        save_dirs = {
-            "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
-            "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
-            "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
-            "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
-        }
+        if end:
+            save_dirs = {
+                "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
+                "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
+                "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
+                "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
+            }
+        else:
+            save_dirs = {
+                "latents": os.path.join(".save/", "latents"),
+                "fano": os.path.join(".save/", "analysis", "fano"),
+                "meanvar": os.path.join(".save/", "analysis", "meanvar"),
+                "spike_hist": os.path.join(".save/", "analysis", "spike_hist"),
+            }
 
         for path in save_dirs.values():
             os.makedirs(path, exist_ok=True)
