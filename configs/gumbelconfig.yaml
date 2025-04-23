@@ -2,7 +2,7 @@
 # Dataset configuration
 # ===============================
 dataset:
-  name: "CIFAR16"
+  name: "CIFAR16" # #CIFAR16 MNIST
 
 # ===============================
 # Model configuration
@@ -13,13 +13,13 @@ model:
   reparam_type: "gumbel"       # "gumbel" or "gamma"
   max_count: 5
   tau: 1.0
-  kl: "analytical"                    # mc or analytical
+  kl: "mc"                    # mc or analytical
 
 # ===============================
 # Encoder configuration
 # ===============================
 encoder:
-  type: "linear"                # or "linear"
+  type: "conv"                # or "linear" "conv" "mlp"
   input_dim:                # only needed for linear encoder
     MNIST: 784
     CIFAR16: 768
@@ -37,10 +37,15 @@ encoder:
 # Decoder configuration
 # ===============================
 decoder:
-  type: "linear"                # or "linear"
+  type: "conv"                # or "linear" "conv" "mlp"
   output_dim: 784             # only needed for linear decoder
   latent_dim: 128
-
+  out_channel:                # only needed for conv decoder
+    MNIST: 1
+    CIFAR16: 3
+  size:
+    MNIST: 7
+    CIFAR16: 4
 # ===============================
 # Optimizer configuration
 # ===============================
