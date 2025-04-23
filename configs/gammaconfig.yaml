@@ -10,7 +10,7 @@ dataset:
 model:
   name: "negbio"              # or "poisson"
   latent_dim: 128             # dimension of latent variable z
-  reparam_type: "gamma"       # "gumbel" or "gamma"
+  reparam_type: "gumbel"       # "gumbel" or "gamma"
   max_count: 30
   tau: 1.0
   kl: "mc"                  # mc or analytical
@@ -32,7 +32,12 @@ decoder:
   type: "linear"                # or "linear"
   output_dim: 784             # only needed for linear decoder
   latent_dim: 128
-
+  out_channel:                 # only needed for conv decoder
+    MNIST: 1
+    CIFAR16: 3
+  size:
+    MNIST: 7
+    CIFAR16: 4
 # ===============================
 # Optimizer configuration
 # ===============================

@@ -71,7 +71,8 @@ class VAETrainer(pl.LightningModule):
             return self.model(x[0])
     
     def training_step(self, batch, batch_idx):
-        x = batch[0].view(batch[0].size(0), -1) 
+        x = batch[0].view(batch[0].size(0), -1)
+        
         epoch = self.current_epoch + batch_idx/self.train_length
         self.beta = min(1.0, 5*epoch/250)
         self.model.t = max((1.0 - 0.95*epoch/250), 0.05)
@@ -94,10 +95,18 @@ class VAETrainer(pl.LightningModule):
                                           self.model.logit_p_prior, 
                                           logit_p
                                         ).mean()
-
-      
+        
+        """
+        MNIST:200 784 ->200 1 28 28
+        CIFAR16:512 768 -> 512 3 16 16
+        """
         if self.cfg['decoder']['type']=="conv":
-            x = batch[0].view(-1, 1, 28, 28)
+            
+            if self.cfg['dataset']['name'] == 'MNIST':
+                x = batch[0].view(-1, 1, 28, 28)
+            elif self.cfg['dataset']['name'] == 'CIFAR16':
+                x = batch[0].view(-1, 3, 16, 16)
+            
 
     
         recon_loss = self.model.mse_loss(x, y)
@@ -126,10 +135,12 @@ class VAETrainer(pl.LightningModule):
                 logit_p
                 )
         kl = kl_diag.mean()
-
+            
         if self.cfg['decoder']['type']=="conv":
-            x = x.view(-1, 1, 28, 28)
-
+            if self.cfg['dataset']['name'] == 'MNIST':
+                x = x.view(-1, 1, 28, 28)
+            elif self.cfg['dataset']['name'] == 'CIFAR16':
+                x = x.view(-1, 3, 16, 16)
         recon_loss = self.model.mse_loss(x, y)
 
      

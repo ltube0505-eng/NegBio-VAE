@@ -56,7 +56,10 @@ def build_decoder(cfg):
             output_dim=cfg['encoder']['input_dim'][cfg['datasetname']]
         )
     elif name == 'conv':
-        return ConvDecoder(latent_dim=latent_dim)
+        return ConvDecoder(latent_dim=latent_dim, 
+                           out_channels=cfg['decoder']['out_channel'][cfg['datasetname']],
+                           size=cfg['decoder']['size'][cfg['datasetname']]
+        )
     elif name == 'mlp':
           return MLPDecoder(
                 latent_dim=latent_dim,
