@@ -1,18 +1,20 @@
 import math
 import os
-import torch.distributions as dists
+
 import numpy as np
 import pytorch_lightning as pl
 import torch
+import torch.distributions as dists
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from pytorch_lightning.loggers import wandb
 from scipy.stats import poisson
+from torch.distributions.relaxed_categorical import RelaxedOneHotCategorical
 from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import datasets
-from torch.distributions.relaxed_categorical import RelaxedOneHotCategorical
+
 import wandb as wdb
 
 
@@ -190,16 +192,42 @@ class NegBinomial(nn.Module):
 
 class Categorical(RelaxedOneHotCategorical):
     def __init__(self, logits, temp=1.0):
-        super(Categorical, self).__init__(temperature=temp, logits=logits)
+        temp = max(temp, torch.finfo(torch.float).eps)
+        logits = logits.clamp(-10, 10)  
+        super().__init__(temperature=temp, logits=logits)
+        self._logits = logits
+        self._probs = F.softmax(logits, dim=-1)
         
-    def comput_kl(self, p):
+    def comput_kl(self, prior_logits = None):
+
+        p_dist = dists.Categorical(probs=self._probs)
+
+        if prior_logits is None:
+            q_probs = torch.full_like(self._probs, fill_value=1.0 / self._probs.size(-1))
+            q_dist = dists.Categorical(probs=q_probs)
+        else:
+            prior_logits = prior_logits.clamp(-10, 10)
+            q_probs = F.softmax(prior_logits, dim=-1)
+            q_dist = dists.Categorical(probs=q_probs)
         
-        q_probs = torch.full(size=p.size(), fill_value=1/p.size(-1)).to(p.device)
+        # probs = torch.full(size=p.size(), fill_value=1/p.size(-1)).to(p.device)
+        # p = dists.Categorical(probs=probs)
+        # q = dists.Categorical(probs=self._probs)
         
-        log_q = torch.log(q_probs.clamp(min=1e-8))
-        log_p = torch.log(F.softmax(p, dim=-1).clamp(min=1e-8))
+        # log_q = torch.log(q_probs.clamp(min=1e-8))
+        # log_p = torch.log(F.softmax(p, dim=-1).clamp(min=1e-8))
         #batch hidden
-        return q_probs * (log_q - log_p)
+        # return q_probs * (log_q - log_p)
+        return dists.kl.kl_divergence(p_dist, q_dist)
+    
+    def rsample(self, hard=False):
+        y = super().rsample()  # softmax + gumbel
+        if hard:
+            # Straight-through estimator
+            index = y.argmax(dim=-1, keepdim=True)
+            y_hard = torch.zeros_like(y).scatter_(-1, index, 1.0)
+            y = (y_hard - y).detach() + y
+        return y
     
 #     def __init__(self, log_rate, logit_p, t=0.0):
 #         self.log_rate = log_rate

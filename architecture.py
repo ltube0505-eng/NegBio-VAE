@@ -11,7 +11,8 @@ from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import datasets
 
 import wandb as wdb
-from architecture_utils import Conv2D, Linear, _build_conv_enc, ResDenseLayer, get_act_fn
+from architecture_utils import (Conv2D, Linear, ResDenseLayer, _build_conv_enc,
+                                get_act_fn)
 
 # class LinearEncoder(nn.Module):
 #     def __init__(self, input_dim=784, latent_dim=128):
@@ -180,14 +181,15 @@ class MLPDecoder(nn.Module):
             activation_fn: str = "swish",
         ):
         super().__init__()
-        self.net = nn.Sequential(
-            Linear(
+        self.fc_dec = Linear(
                 in_features=latent_dim,
                 out_features=output_dim,
                 normalize=normalize,
                 normalize_dim=normalize_dim,
                 bias=bias,
-            ),
+            )
+        self.net = nn.Sequential(
+            self.fc_dec,
             get_act_fn(activation_fn),
             ResDenseLayer(output_dim),
             get_act_fn(activation_fn),

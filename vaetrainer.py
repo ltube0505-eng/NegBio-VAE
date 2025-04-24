@@ -1,6 +1,6 @@
 import os
 import warnings
-from torch.distributions import Categorical
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
@@ -8,12 +8,12 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
+from torch.distributions import Categorical, RelaxedOneHotCategorical
 from torchmetrics.image.fid import FrechetInceptionDistance
-from torch.distributions import RelaxedOneHotCategorical
+
 warnings.filterwarnings("ignore")
 import wandb as wdb
 from model import GenericVAE
-
 from utils import (build_decoder, build_encoder, compute_inception_score,
                    find_last_contiguous_zeros, get_overdispersion_index,
                    log_dead_neurons_diagnostics, log_latent_mean_vs_var,
@@ -213,12 +213,12 @@ class VAETrainer(pl.LightningModule):
 
                 self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
                 self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
-                log_dead_neurons_diagnostics(
-                    kl_diag=kl_diag,
-                    dead_mask=dead_mask,
-                    logger=self.logger,
-                    step_name=f"val_epoch_{self.current_epoch}"
-                )
+                # log_dead_neurons_diagnostics(
+                #     kl_diag=kl_diag,
+                #     dead_mask=dead_mask,
+                #     logger=self.logger,
+                #     step_name=f"val_epoch_{self.current_epoch}"
+                # )
             else:
                 print("[Warning] No KL diagnostics found for this epoch.")
             
@@ -258,7 +258,7 @@ class VAETrainer(pl.LightningModule):
                 return kl < thres
 
             
-        if model_type == 'categorical' and hasattr(self.model, 'find_dead_neurons'):
+        if model_type == 'category' and hasattr(self.model, 'find_dead_neurons'):
             return self.model.find_dead_neurons(2)
         
         if enc_type == 'linear' and hasattr(self.model, 'find_dead_neurons'):
@@ -438,12 +438,12 @@ class VAETrainer(pl.LightningModule):
         kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
         dead_mask = self.find_dead_neurons(kl=kl_diag)
         dnr = dead_mask.mean().item()
-        log_dead_neurons_diagnostics(
-            kl_diag=kl_diag,
-            dead_mask=dead_mask,
-            logger=self.logger,
-            step_name=f"val_epoch_{self.current_epoch}"
-        )
+        # log_dead_neurons_diagnostics(
+        #     kl_diag=kl_diag,
+        #     dead_mask=dead_mask,
+        #     logger=self.logger,
+        #     step_name=f"val_epoch_{self.current_epoch}"
+        # )
 
         # ========== Recon input collection ==========
         recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None

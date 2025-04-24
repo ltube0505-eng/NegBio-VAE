@@ -37,7 +37,7 @@ encoder:
 # Decoder configuration
 # ===============================
 decoder:
-  type: "conv"                # or "linear" "conv" "mlp"
+  type: "mlp"                # or "linear" "conv" "mlp"
   output_dim: 784             # only needed for linear decoder
   latent_dim: 128
   out_channel:                # only needed for conv decoder
