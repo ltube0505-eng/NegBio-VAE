@@ -2,7 +2,7 @@
 # Dataset configuration
 # ===============================
 dataset:
-  name: "CIFAR16"
+  name: 
 
 # ===============================
 # Model configuration
