@@ -1,6 +1,6 @@
 import os
 import warnings
-
+from torch.distributions import Categorical
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
@@ -9,10 +9,11 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
 from torchmetrics.image.fid import FrechetInceptionDistance
-
+from torch.distributions import RelaxedOneHotCategorical
 warnings.filterwarnings("ignore")
 import wandb as wdb
 from model import GenericVAE
+
 from utils import (build_decoder, build_encoder, compute_inception_score,
                    find_last_contiguous_zeros, get_overdispersion_index,
                    log_dead_neurons_diagnostics, log_latent_mean_vs_var,
@@ -85,17 +86,21 @@ class VAETrainer(pl.LightningModule):
         elif self.model_name == "negbio":
             dist, logit_p, z, y = self(batch)    
             if self.cfg['model']['kl'] == "mc":
-                # print("MC estimation")
                 kl =  self.model.dist_class.kl_mc(self.model.log_r_prior, 
                                           self.model.logit_p_prior, 
                                           logit_p
                                         ).mean()
+                
             else:
                 kl = self.model.dist_class.kl(self.model.log_r_prior, 
                                           self.model.logit_p_prior, 
                                           logit_p
                                         ).mean()
-        
+                
+        elif self.model_name == "category":
+            dist, logit_p, z, y = self(batch)
+            kl = self.model.dist_class.comput_kl(logit_p).mean()
+            
         """
         MNIST:200 784 ->200 1 28 28
         CIFAR16:512 768 -> 512 3 16 16
@@ -106,8 +111,6 @@ class VAETrainer(pl.LightningModule):
                 x = batch[0].view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = batch[0].view(-1, 3, 16, 16)
-            
-
     
         recon_loss = self.model.mse_loss(x, y)
 
@@ -129,11 +132,16 @@ class VAETrainer(pl.LightningModule):
             # kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
             dist, logit_p, z, y = self(batch)
+            # batch hidden
             kl_diag = self.model.dist_class.kl(
                 self.model.log_r_prior, 
                 self.model.logit_p_prior, 
                 logit_p
                 )
+            
+        elif self.model_name == "category":
+            dist, logit_p, z, y = self(batch)
+            kl_diag = self.model.dist_class.comput_kl(logit_p)
         kl = kl_diag.mean()
             
         if self.cfg['decoder']['type']=="conv":
@@ -162,7 +170,7 @@ class VAETrainer(pl.LightningModule):
         elif self.cfg['datasetname'] == 'CIFAR16':
             real_imgs = batch[0].view(-1, 3, 16, 16)
             recon_imgs = y.view(-1, 3, 16, 16)
-
+        
         self._val_kl_diags.append(kl_diag.detach().cpu()) 
         self._val_latents.append(z.detach().cpu())
         self._val_recons.append(recon_imgs.detach().cpu())
@@ -192,14 +200,14 @@ class VAETrainer(pl.LightningModule):
                 savelocal=False
             )
 
-        
         return loss
     
     def on_validation_epoch_end(self):
 
         if self.current_epoch % 50 ==0 or self.current_epoch == self.trainer.max_epochs - 1:
             if len(self._val_kl_diags) > 0:
-                kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()  # shape: [latent_dim]
+                kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()# shape: [latent_dim]
+                
                 dead_mask = self.find_dead_neurons(kl=kl_diag)
                 dnr = dead_mask.mean().item()
 

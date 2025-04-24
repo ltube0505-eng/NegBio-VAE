@@ -23,7 +23,7 @@ def build_encoder(cfg):
     
     elif name == 'conv':
         return ConvEncoder(latent_dim=latent_dim,
-                           dataset = cfg['dataset']['name'],
+                           dataset = cfg['datasetname'],
                            use_norm=encoder_cfg['use_norm'],
                            bias = encoder_cfg['bias'])
         # return ConvEncoder(encoder_cfg,

@@ -1,6 +1,6 @@
 import math
 import os
-
+import torch.distributions as dists
 import numpy as np
 import pytorch_lightning as pl
 import torch
@@ -12,7 +12,7 @@ from scipy.stats import poisson
 from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import datasets
-
+from torch.distributions.relaxed_categorical import RelaxedOneHotCategorical
 import wandb as wdb
 
 
@@ -48,19 +48,6 @@ class Poisson:
         rdr = self.rate #final rate is rdr
         logdr = du #log of the modulation of prior rate
         return r-rdr+rdr*logdr
-
-    # def linear_decoder_exact_recon_loss(self, x, phi):
-    #     mean = self.rate
-    #     var = self.rate
-
-    #     a = phi.pow(2).sum(0)
-
-    #     mse = x - mean @ phi.T
-    #     mse = mse.pow(2).sum(1)
-    #     recon_loss = mse + var @ a
-
-    #     return recon_loss.mean()
-
 
 class GammaSampler:
     def __init__(self, t=0.0):
@@ -201,7 +188,19 @@ class NegBinomial(nn.Module):
         else:
             raise NotImplementedError(f"No KL_MC implemented for reparam_type: {self.reparam_type}")
 
-# class NegBinomial_Gamma:
+class Categorical(RelaxedOneHotCategorical):
+    def __init__(self, logits, temp=1.0):
+        super(Categorical, self).__init__(temperature=temp, logits=logits)
+        
+    def comput_kl(self, p):
+        
+        q_probs = torch.full(size=p.size(), fill_value=1/p.size(-1)).to(p.device)
+        
+        log_q = torch.log(q_probs.clamp(min=1e-8))
+        log_p = torch.log(F.softmax(p, dim=-1).clamp(min=1e-8))
+        #batch hidden
+        return q_probs * (log_q - log_p)
+    
 #     def __init__(self, log_rate, logit_p, t=0.0):
 #         self.log_rate = log_rate
 #         self.rate = torch.exp(

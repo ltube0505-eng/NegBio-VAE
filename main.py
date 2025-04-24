@@ -17,9 +17,9 @@ warnings.filterwarnings("ignore")
 
 
 FLAGS = flags.FLAGS
-flags.DEFINE_string("reparam_type", "gamma", "Model type: gamma or gumbel")
-flags.DEFINE_string("model_type", "negbio", "Model type: negbio or poisson")
-flags.DEFINE_string("dataset", "CIFAR16", "dataset name") #CIFAR16 MNIST
+flags.DEFINE_string("reparam_type", "gumbel", "Model type: gamma or gumbel")
+flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson or category")
+flags.DEFINE_string("dataset", "CIFAR16", "CIFAR16 or MNIST") #
 flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
@@ -51,6 +51,10 @@ def main(argv):
                 cfg = yaml.safe_load(f)
 
     cfg['datasetname'] = FLAGS.dataset
+    cfg['dataset']['name'] = FLAGS.dataset
+    cfg['model']['name'] = FLAGS.model_type
+
+
     if cfg['encoder']['type'] == "conv":
         flatten_flag = False
     else:
@@ -76,7 +80,7 @@ def main(argv):
         strategy = None  
     else:
         accelerator = "gpu"
-        devices = [2, 3]
+        devices = [3]
         strategy = "ddp"
 
             

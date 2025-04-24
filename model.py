@@ -1,6 +1,5 @@
 import math
 import os
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
@@ -11,11 +10,11 @@ from pytorch_lightning.loggers import wandb
 from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import datasets
-
+import torch.nn.functional as F
 import wandb as wdb
-from distribution import NegBinomial, Poisson
+from distribution import NegBinomial, Poisson, Categorical
 from utils import find_critical_ids, find_last_contiguous_zeros, tonp
-
+from torch.distributions import RelaxedOneHotCategorical
 
 class GenericVAE(nn.Module):
     def __init__(self,
@@ -30,7 +29,7 @@ class GenericVAE(nn.Module):
                  **kwargs
                  ):
         super(GenericVAE, self).__init__()
-        assert dist_type in ['poisson', 'negbio']
+        assert dist_type in ['poisson', 'negbio', 'category']
         self.dist_type = dist_type
         # self.dist_class = dist_class
         self.latent_dim = latent_dim 
@@ -52,7 +51,9 @@ class GenericVAE(nn.Module):
                         )
             self.log_r_prior = nn.Parameter(torch.zeros((1, latent_dim)))
             self.logit_p_prior = nn.Parameter(torch.zeros((1, latent_dim)))
-
+        elif dist_type == 'category':
+            self.dist_class = None
+            
         else:
             raise NotImplementedError
         
@@ -74,7 +75,13 @@ class GenericVAE(nn.Module):
             z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)             
             y = self.decode(z)
             return self.dist_class, logit_p, z, y
-        
+        elif self.dist_type == "category":
+            logit_p = self.encode(x) 
+            self.dist_class = Categorical(logits=logit_p)
+            z = self.dist_class.rsample()
+            #z_one_hot = F.one_hot(z, num_classes=self.num_classes).float()
+            y = self.decode(z)
+            return self.dist_class, logit_p, z, y
         else:
             raise NotImplementedError
         
