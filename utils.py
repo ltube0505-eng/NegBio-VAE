@@ -13,7 +13,15 @@ from architecture import *
 def build_encoder(cfg):
     encoder_cfg = cfg['encoder']
     name = encoder_cfg['type'].lower()
-    latent_dim = encoder_cfg.get('latent_dim', 128)
+    dist_type = cfg['model']['name']
+    base_latent_dim = encoder_cfg.get('latent_dim', 128)
+    latent_dim = (
+            base_latent_dim * 2 
+            if dist_type in ['laplace', 'gaussian'] 
+            else base_latent_dim
+        )
+
+    # latent_dim = encoder_cfg.get('latent_dim', 128)
     if name == 'linear':
         print(encoder_cfg['input_dim'][cfg['datasetname']])
         return LinearEncoder(
@@ -286,3 +294,5 @@ def compute_inception_score(images, batch_size=32, splits=10, device = "cuda"):
     return np.mean(scores), np.std(scores)
 
 
+def softclamp_sym(x, clamp=5.3):
+    return clamp * torch.tanh(x / clamp)

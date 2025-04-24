@@ -10,12 +10,15 @@ import torch.nn.functional as F
 import torchvision
 from pytorch_lightning.loggers import wandb
 from scipy.stats import poisson
+from torch.distributions import Laplace as TorchLaplace
+from torch.distributions import kl_divergence
 from torch.distributions.relaxed_categorical import RelaxedOneHotCategorical
 from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import datasets
 
 import wandb as wdb
+from utils import softclamp_sym
 
 
 class Poisson:
@@ -228,7 +231,68 @@ class Categorical(RelaxedOneHotCategorical):
             y_hard = torch.zeros_like(y).scatter_(-1, index, 1.0)
             y = (y_hard - y).detach() + y
         return y
+
+
+
+class Laplace:
+    def __init__(self, loc, log_scale, t=1.0, clamp=5.0):
+        self.t = t
+        self.loc = loc
+        self.log_scale = log_scale.clamp(-clamp, clamp)
+        self.scale = torch.exp(self.log_scale).clamp(min=1e-6) * self.t
+        self.dist = TorchLaplace(self.loc, self.scale)
+
+    @property
+    def mean(self):
+        return self.dist.mean
+
+    @property
+    def variance(self):
+        return self.dist.variance
+
+    def rsample(self, hard: bool = False):
+        return self.dist.rsample()
+
+    def kl(self, prior=None):
+        if prior is None:
+            prior = TorchLaplace(
+                loc=torch.zeros_like(self.loc), 
+                scale=torch.ones_like(self.scale)
+            )
+        return kl_divergence(self.dist, prior)
     
+
+class Gaussian:
+    def __init__(self, loc, log_scale, t=1.0, clamp=5.0):
+        self.t = t
+        self.loc = loc
+        self.log_scale = log_scale.clamp(-clamp, clamp)
+        self.scale = torch.exp(self.log_scale).clamp(min=1e-6) * self.t
+        self.dist = dists.Normal(self.loc, self.scale)
+
+    @property
+    def mean(self):
+        return self.loc
+
+    @property
+    def variance(self):
+        return self.scale.pow(2)
+
+    def rsample(self):
+        return self.dist.rsample()
+
+    def kl(self, prior=None):
+        if prior is None:
+            prior = dists.Normal(
+                loc=torch.zeros_like(self.loc),
+                scale=torch.ones_like(self.scale)
+            )
+        else:
+            prior_loc, prior_scale = prior
+            prior = dists.Normal(prior_loc, prior_scale.clamp(min=1e-6))
+
+        return dists.kl.kl_divergence(self.dist, prior)
+
 #     def __init__(self, log_rate, logit_p, t=0.0):
 #         self.log_rate = log_rate
 #         self.rate = torch.exp(

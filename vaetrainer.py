@@ -11,6 +11,8 @@ import torchvision
 from torch.distributions import Categorical, RelaxedOneHotCategorical
 from torchmetrics.image.fid import FrechetInceptionDistance
 
+from distribution import Laplace
+
 warnings.filterwarnings("ignore")
 import wandb as wdb
 from model import GenericVAE
@@ -26,17 +28,22 @@ class VAETrainer(pl.LightningModule):
         self.cfg = cfg 
         encoder = build_encoder(cfg)
         decoder = build_decoder(cfg)
+
+        self.model_name = cfg['model']['name']
+        base_latent_dim = cfg['model']['latent_dim']
+    
        
         self.model = GenericVAE(
                 encoder=encoder,
                 decoder=decoder,
-                latent_dim=cfg['model']['latent_dim'],
+                latent_dim=base_latent_dim,
                 dist_type=cfg['model']['name'],
                 reparam_type = cfg['model']['reparam_type'],
                 max_count = cfg['model']['max_count'],
                 tau = cfg['model']['tau'],
+                latent_act= cfg['model']['latent_act']
             )
-        self.model_name = cfg['model']['name']
+        
 
         opt_name = cfg['optimizer']['name'].lower()
         opt_map = {'adam': torch.optim.Adam, 'sgd': torch.optim.SGD}
@@ -97,9 +104,17 @@ class VAETrainer(pl.LightningModule):
                                           logit_p
                                         ).mean()
                 
-        elif self.model_name == "category":
+        elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl = self.model.dist_class.comput_kl(logit_p).mean()
+
+        elif self.model_name == "laplace":
+            dist, (loc, log_scale), z, y = self(batch)
+            kl = dist.kl().mean()
+
+        elif self.model_name == "gaussian":
+            dist, (loc, log_scale), z, y = self(batch)
+            kl = dist.kl().mean()
             
         """
         MNIST:200 784 ->200 1 28 28
@@ -139,9 +154,16 @@ class VAETrainer(pl.LightningModule):
                 logit_p
                 )
             
-        elif self.model_name == "category":
+        elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl_diag = self.model.dist_class.comput_kl(logit_p)
+        elif self.model_name == "laplace":
+            dist, (loc, log_scale), z, y = self(batch)
+            kl_diag = dist.kl()
+        elif self.model_name == "gaussian":
+            dist, (loc, log_scale), z, y = self(batch)
+            kl_diag = dist.kl()
+
         kl = kl_diag.mean()
             
         if self.cfg['decoder']['type']=="conv":
@@ -258,7 +280,7 @@ class VAETrainer(pl.LightningModule):
                 return kl < thres
 
             
-        if model_type == 'category' and hasattr(self.model, 'find_dead_neurons'):
+        if model_type == 'categorical' and hasattr(self.model, 'find_dead_neurons'):
             return self.model.find_dead_neurons(2)
         
         if enc_type == 'linear' and hasattr(self.model, 'find_dead_neurons'):

@@ -8,12 +8,13 @@ dataset:
 # Model configuration
 # ===============================
 model:
-  name: "category"              # or "poisson" "negbio" "category"
+  name: "categorical"              # or "poisson" "negbio" "categorical","laplace"
   latent_dim: 128             # dimension of latent variable z
   reparam_type: "gamma"       # "gumbel" or "gamma"
   max_count: 5
   tau: 1.0
-  kl: "mc"                    # mc or analytical
+  kl: "mc"     
+  latent_act: "sigmoid"               # mc or analytical
 
 # ===============================
 # Encoder configuration

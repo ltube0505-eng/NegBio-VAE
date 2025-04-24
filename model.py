@@ -1,20 +1,24 @@
 import math
 import os
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision
 from pytorch_lightning.loggers import wandb
+from torch.distributions import RelaxedOneHotCategorical
 from torch.utils.data import DataLoader
 from torchmetrics.image.fid import FrechetInceptionDistance
 from torchvision import datasets
-import torch.nn.functional as F
+
 import wandb as wdb
-from distribution import NegBinomial, Poisson, Categorical
-from utils import find_critical_ids, find_last_contiguous_zeros, tonp
-from torch.distributions import RelaxedOneHotCategorical
+from distribution import Categorical, Gaussian, Laplace, NegBinomial, Poisson
+from utils import (find_critical_ids, find_last_contiguous_zeros,
+                   softclamp_sym, tonp)
+
 
 class GenericVAE(nn.Module):
     def __init__(self,
@@ -26,10 +30,11 @@ class GenericVAE(nn.Module):
                  reparam_type = "gamma",
                  max_count = 15,
                  tau = 1.0,
+                 latent_act = "sigmoid",
                  **kwargs
                  ):
         super(GenericVAE, self).__init__()
-        assert dist_type in ['poisson', 'negbio', 'category']
+        assert dist_type in ['poisson', 'negbio', 'categorical', 'laplace', 'gaussian']
         self.dist_type = dist_type
         # self.dist_class = dist_class
         self.latent_dim = latent_dim 
@@ -39,6 +44,7 @@ class GenericVAE(nn.Module):
         
         self.encode = encoder 
         self.decode = decoder 
+        self.latent_act = latent_act
         self.t = 1.0
 
         if dist_type == 'poisson':
@@ -51,14 +57,33 @@ class GenericVAE(nn.Module):
                         )
             self.log_r_prior = nn.Parameter(torch.zeros((1, latent_dim)))
             self.logit_p_prior = nn.Parameter(torch.zeros((1, latent_dim)))
-        elif dist_type == 'category':
+        elif dist_type == 'categorical':
             self.dist_class = None
-            
+        elif dist_type == 'laplace':
+            None
+        elif dist_type == "gaussian":
+            self.prior_loc = nn.Parameter(torch.zeros((1, latent_dim)))
+            self.prior_log_scale = nn.Parameter(torch.zeros((1, latent_dim)))
+            self.prior = (self.prior_loc, self.prior_log_scale)
         else:
             raise NotImplementedError
         
     def mse_loss(self, x, y):
         return ((y - x)**2).sum(-1).mean()
+    
+
+    def _act_fn(self, z):
+        act_fn = {
+			'relu': F.relu,
+			'softplus': F.softplus,
+			'sigmoid': torch.sigmoid,
+			'quartic': lambda x: x.pow(4),
+			'square': torch.square,
+			'exp': torch.exp,
+		}.get(self.latent_act)
+        if act_fn is not None:
+            return act_fn(z)
+        return z
         
     def forward(self, x):
         validation = not torch.is_grad_enabled()
@@ -75,13 +100,29 @@ class GenericVAE(nn.Module):
             z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)             
             y = self.decode(z)
             return self.dist_class, logit_p, z, y
-        elif self.dist_type == "category":
+        elif self.dist_type == "categorical":
             logit_p = self.encode(x) 
             self.dist_class = Categorical(logits=logit_p)
             z = self.dist_class.rsample()
             #z_one_hot = F.one_hot(z, num_classes=self.num_classes).float()
             y = self.decode(z)
             return self.dist_class, logit_p, z, y
+        elif self.dist_type == "laplace":
+            out = self.encode(x)
+            loc, log_scale = out.chunk(2, dim=-1)
+            dist = Laplace(loc, log_scale, self.t)
+            z = dist.rsample()
+            z = self._act_fn(z)
+            y = self.decode(z)
+            return dist, (loc, log_scale), z, y
+        elif self.dist_type == "gaussian":
+            out = self.encode(x)
+            loc, log_scale = out.chunk(2, dim=-1)
+            dist = Gaussian(loc, log_scale, t=self.t)
+            z = dist.rsample()
+            z = self._act_fn(z)
+            y = self.decode(z)
+            return dist, (loc, log_scale), z, y
         else:
             raise NotImplementedError
         
