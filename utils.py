@@ -61,23 +61,47 @@ def build_decoder(cfg):
     name = decoder_cfg['type'].lower()
     latent_dim = decoder_cfg.get('latent_dim', 128)
     if name == 'linear':
-        return LinearDecoder(
-            latent_dim=latent_dim,
-            output_dim=cfg['encoder']['input_dim'][cfg['datasetname']]
-        )
-    elif name == 'conv':
-        return ConvDecoder(latent_dim=latent_dim, 
-                           out_channels=cfg['decoder']['out_channel'][cfg['datasetname']],
-                           size=cfg['decoder']['size'][cfg['datasetname']]
-        )
-    elif name == 'mlp':
-          return MLPDecoder(
+        if cfg['datasetname'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+            return LinearDecoder(
                 latent_dim=latent_dim,
                 output_dim=cfg['encoder']['input_dim'][cfg['datasetname']],
-                normalize=decoder_cfg.get('normalize', False),
-                bias=decoder_cfg.get('bias', False),
-                activation_fn=decoder_cfg.get('activation_fn', 'swish'),
-          )
+                tanh=True
+            )
+        else:
+            return LinearDecoder(
+                latent_dim=latent_dim,
+                output_dim=cfg['encoder']['input_dim'][cfg['datasetname']]
+            )
+    elif name == 'conv':
+        if cfg['datasetname'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+             return ConvDecoder(latent_dim=latent_dim, 
+                            out_channels=cfg['decoder']['out_channel'][cfg['datasetname']],
+                            size=cfg['decoder']['size'][cfg['datasetname']],
+                            tanh=True
+            )
+        else:
+            return ConvDecoder(latent_dim=latent_dim, 
+                            out_channels=cfg['decoder']['out_channel'][cfg['datasetname']],
+                            size=cfg['decoder']['size'][cfg['datasetname']]
+            )
+    elif name == 'mlp':
+        if cfg['datasetname'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+            return MLPDecoder(
+                        latent_dim=latent_dim,
+                        output_dim=cfg['encoder']['input_dim'][cfg['datasetname']],
+                        normalize=decoder_cfg.get('normalize', False),
+                        bias=decoder_cfg.get('bias', False),
+                        activation_fn=decoder_cfg.get('activation_fn', 'swish'),
+                        tanh=True
+                )
+        else:
+            return MLPDecoder(
+                    latent_dim=latent_dim,
+                    output_dim=cfg['encoder']['input_dim'][cfg['datasetname']],
+                    normalize=decoder_cfg.get('normalize', False),
+                    bias=decoder_cfg.get('bias', False),
+                    activation_fn=decoder_cfg.get('activation_fn', 'swish'),
+            )
     else:
         raise ValueError(f"Unsupported decoder type: {name}")
     

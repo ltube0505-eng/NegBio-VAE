@@ -124,7 +124,7 @@ class VAETrainer(pl.LightningModule):
         """
         if self.cfg['decoder']['type']=="conv":
             
-            if self.cfg['dataset']['name'] == 'MNIST':
+            if self.cfg['dataset']['name'] == 'MNIST'or 'Omniglot':
                 x = batch[0].view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = batch[0].view(-1, 3, 16, 16)
@@ -169,7 +169,7 @@ class VAETrainer(pl.LightningModule):
         kl = kl_diag.mean()
             
         if self.cfg['decoder']['type']=="conv":
-            if self.cfg['dataset']['name'] == 'MNIST':
+            if self.cfg['dataset']['name'] == 'MNIST' or 'Omniglot':
                 x = x.view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = x.view(-1, 3, 16, 16)
