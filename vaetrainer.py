@@ -16,10 +16,10 @@ from distribution import Laplace
 warnings.filterwarnings("ignore")
 import wandb as wdb
 from model import GenericVAE
-from utils import (build_decoder, build_encoder, compute_inception_score,
-                   find_last_contiguous_zeros, get_overdispersion_index,
-                   log_dead_neurons_diagnostics, log_latent_mean_vs_var,
-                   plot_fano, spike_count_hist)
+from utils import (build_decoder, build_encoder, compute_fid,
+                   compute_inception_score, find_last_contiguous_zeros,
+                   get_overdispersion_index, log_dead_neurons_diagnostics,
+                   log_latent_mean_vs_var, plot_fano, spike_count_hist)
 
 
 class VAETrainer(pl.LightningModule):
@@ -53,7 +53,9 @@ class VAETrainer(pl.LightningModule):
         self.beta = 0.0
         self.train_length = None
         fid_feat_dim = cfg.get('eval', {}).get('fid_feature', 64)
-        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True)
+        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, 
+                                                   reset_real_features=True, 
+                                                   normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
         self.log_images = cfg.get('eval', {}).get('log_images', True)
         self._val_kl_diags = []
         self._val_latents = []
@@ -197,8 +199,10 @@ class VAETrainer(pl.LightningModule):
         self._val_latents.append(z.detach().cpu())
         self._val_recons.append(recon_imgs.detach().cpu())
         self._val_inputs.append(real_imgs.detach().cpu())
-        self.fid_metric.update(real_imgs, real=True)
-        self.fid_metric.update(recon_imgs, real=False)
+        # self.fid_metric.update(real_imgs, real=True)
+        # self.fid_metric.update(recon_imgs, real=False)
+        self.fid_metric.update(real_imgs.to(self.fid_metric.device), real=True)
+        self.fid_metric.update(recon_imgs.to(self.fid_metric.device), real=False)
 
         if batch_idx % 50 == 0:
             if self.cfg['datasetname'] == 'MNIST':
@@ -299,120 +303,6 @@ class VAETrainer(pl.LightningModule):
         dead = log_kl < bins[idx] if idx is not None else kl < 3e-4
         return dead.astype(bool)
 
-
-    # def on_fit_end(self, end=False):
-
-    #     # Build save dirs
-    #     if end:
-    #         save_dirs = {
-    #             "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
-    #             "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
-    #             "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
-    #             "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
-    #         }
-    #     else:
-    #         save_dirs = {
-    #             "latents": os.path.join(".save/", "latents"),
-    #             "fano": os.path.join(".save/", "analysis", "fano"),
-    #             "meanvar": os.path.join(".save/", "analysis", "meanvar"),
-    #             "spike_hist": os.path.join(".save/", "analysis", "spike_hist"),
-    #         }
-
-    #     for path in save_dirs.values():
-    #         os.makedirs(path, exist_ok=True)
-
-
-        
-    #     # ========== Save latent z ==========
-    #     if len(self._val_latents) > 0:
-    #         all_z = torch.cat(self._val_latents, dim=0).numpy()
-    #         np.save(os.path.join(save_dirs["latents"], "val_z_all.npy"), all_z)
-    #         print(f"[✔] Saved all validation z")
-    #     else:
-    #         print("[⚠] No validation z collected to save.")
-
-
-    #     # ===== Overdispersion index & mean-var scatter =====
-    #     overdispersion_index = get_overdispersion_index(all_z)
-
-    #     log_latent_mean_vs_var(
-    #         logger=self.logger.experiment,
-    #         z=all_z,
-    #         save_dir=save_dirs['meanvar'],
-    #         step_name="final",
-    #         caption="Latent Mean vs Variance"
-    #     )
-
-    #     #===== Fano plot=================
-    #     plot_fano(all_z, save_dirs["fano"],self.logger)
-
-    #     #===== Hist plot==================
-    #     spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
-
-    #     # ===== Dead units and KL diagnostic =====
-
-    #     # ========== FID ==========
-    #     if hasattr(self, "fid_metric") and self.fid_metric is not None:
-    #         try:
-    #             fid_score = self.fid_metric.compute().item()
-    #             print(f"[🧬] Final FID: {fid_score:.4f}")
-    #         except Exception as e:
-    #             fid_score = None
-    #             print(f"[⚠] Failed to compute FID: {e}")
-    #     else:
-    #         fid_score = None
-    #         print("[⚠] No FID metric found.")
-
-    #     kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
-    #     dead_mask = self.find_dead_neurons(kl=kl_diag)
-    #     dnr = dead_mask.mean().item()
-        
-    #     self.logger.experiment.log({
-    #         "final_overdispersion_index": overdispersion_index,
-    #         "final_dnr": dnr
-    #     })
-
-    #     log_dead_neurons_diagnostics(
-    #             kl_diag=kl_diag,
-    #             dead_mask=dead_mask,
-    #             logger=self.logger,
-    #             step_name=f"val_epoch_{self.current_epoch}"
-    #         )
-        
-    #     # ========== Collect reconstructions and inputs ==========
-    #     if hasattr(self, "_val_recons") and len(self._val_recons) > 0:
-    #         recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1)  # [N, 3, H, W]
-    #     else:
-    #         print("[⚠] No reconstruction images found.")
-    #         recon_all = None
-
-    #     if hasattr(self, "_val_inputs") and len(self._val_inputs) > 0:
-    #         input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1)
-    #     else:
-    #         input_all = None
-
-    #     # ========== MSE ==========
-    #     if input_all is not None and recon_all is not None:
-    #         mse = F.mse_loss(recon_all, input_all).item()
-    #         print(f"[📐] Final MSE: {mse:.6f}")
-    #     else:
-    #         mse = None
-    #         print("[⚠] MSE skipped due to missing recon/input.")
-
-    #     # ========== Inception Score ==========
-    #     if recon_all is not None:
-    #         is_mean, is_std = compute_inception_score(recon_all,device=self.device)
-    #         print(f"[🌈] FINAL IS: {is_mean:.4f} ± {is_std:.4f}")
-    #     else:
-    #         is_mean, is_std = None, None
-    #         print("[⚠] Inception Score skipped due to missing recon.")
-        
-    #     # ===========PRINT OUT RESULTS================
-    #     print("LATENT DIAGNOSITICS:")
-    #     print(f"[📊] Overdispersion Index (ODI): {overdispersion_index:.4f}")
-    #     print(f"[💀] Dead Neuron Rate (DNR): {dnr:.4f}")
-
-
     def on_fit_end(self, end=False):
         # ========== Save dirs ==========
         if end:
@@ -468,15 +358,21 @@ class VAETrainer(pl.LightningModule):
         # )
 
         # ========== Recon input collection ==========
+        # max_samples = 5000
         recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
         input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
 
+        # recon_imgs = recon_all[:max_samples]
+        # input_imgs = input_all[:max_samples]
+        
+        
         # ========== MSE ==========
         if input_all is not None and recon_all is not None:
             mse = F.mse_loss(recon_all, input_all).item()
         else:
             mse = None
             print("[⚠] MSE skipped due to missing recon/input.")
+
 
         # ========== Inception Score ==========
         if recon_all is not None:
@@ -487,7 +383,11 @@ class VAETrainer(pl.LightningModule):
 
         # ========== FID ==========
         try:
-            fid_score = self.fid_metric.compute().item()
+            input_features = input_all.view(input_all.size(0), -1).double().cpu()
+            recon_features = recon_all.view(recon_all.size(0), -1).double().cpu()
+            fid_score = compute_fid(input_features, recon_features)
+
+            # fid_score = self.fid_metric.compute().item()
         except Exception as e:
             fid_score = None
             print(f"[⚠] Failed to compute FID: {e}")

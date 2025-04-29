@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
 import torch.nn.functional as F
+from scipy.linalg import sqrtm
+from torchmetrics.image.inception import InceptionScore
 from torchvision.models import inception_v3
 
 import wandb as wdb
@@ -296,3 +298,34 @@ def compute_inception_score(images, batch_size=32, splits=10, device = "cuda"):
 
 def softclamp_sym(x, clamp=5.3):
     return clamp * torch.tanh(x / clamp)
+
+
+def compute_fid(real_features, fake_features, eps=1e-6):
+    mu1, sigma1 = real_features.mean(0).cpu().numpy(), np.cov(real_features.cpu().numpy(), rowvar=False)
+    mu2, sigma2 = fake_features.mean(0).cpu().numpy(), np.cov(fake_features.cpu().numpy(), rowvar=False)
+
+    diff = mu1 - mu2
+    covmean, _ = sqrtm(sigma1.dot(sigma2), disp=False)
+
+    if not np.isfinite(covmean).all():
+        print("[⚠] fid: sqrtm not finite, adding epsilon to diagonal.")
+        sigma1 += np.eye(sigma1.shape[0]) * eps
+        sigma2 += np.eye(sigma2.shape[0]) * eps
+        covmean = sqrtm(sigma1.dot(sigma2))
+
+    # If sqrtm returns complex
+    if np.iscomplexobj(covmean):
+        covmean = covmean.real
+
+    fid = diff.dot(diff) + np.trace(sigma1 + sigma2 - 2 * covmean)
+    return float(fid)
+
+def compute_inception_score_from_images(imgs, splits=10):
+    imgs = (imgs.clamp(0, 1) * 2 - 1)  # rescale to [-1, 1] for InceptionV3
+    metric = InceptionScore(normalize=True).cpu()
+    metric.update(imgs.cpu())
+    is_mean, is_std = metric.compute()
+    return is_mean.item(), is_std.item()
+
+def to_cpu_float64(x):
+    return x.to(dtype=torch.float64, device="cpu")
