@@ -25,15 +25,15 @@ def build_encoder(cfg):
 
     # latent_dim = encoder_cfg.get('latent_dim', 128)
     if name == 'linear':
-        print(encoder_cfg['input_dim'][cfg['datasetname']])
+        print(encoder_cfg['input_dim'][cfg['dataset']['name']])
         return LinearEncoder(
-            input_dim=encoder_cfg['input_dim'][cfg['datasetname']],
+            input_dim=encoder_cfg['input_dim'][cfg['dataset']['name']],
             latent_dim=latent_dim
         )
     
     elif name == 'conv':
         return ConvEncoder(latent_dim=latent_dim,
-                           dataset = cfg['datasetname'],
+                           dataset = cfg['dataset']['name'],
                            use_norm=encoder_cfg['use_norm'],
                            bias = encoder_cfg['bias'])
         # return ConvEncoder(encoder_cfg,
@@ -42,7 +42,7 @@ def build_encoder(cfg):
         #                    n_ch=32)
     elif name == 'mlp':
           return MLPEncoder(
-                input_dim=encoder_cfg['input_dim'][cfg['datasetname']],
+                input_dim=encoder_cfg['input_dim'][cfg['dataset']['name']],
                 latent_dim=latent_dim,
                 expand=encoder_cfg.get('expand', 32),
                 normalize=encoder_cfg.get('normalize', False),
@@ -61,34 +61,34 @@ def build_decoder(cfg):
     name = decoder_cfg['type'].lower()
     latent_dim = decoder_cfg.get('latent_dim', 128)
     if name == 'linear':
-        if cfg['datasetname'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
             return LinearDecoder(
                 latent_dim=latent_dim,
-                output_dim=cfg['encoder']['input_dim'][cfg['datasetname']],
+                output_dim=cfg['encoder']['input_dim'][cfg['dataset']['name']],
                 tanh=True
             )
         else:
             return LinearDecoder(
                 latent_dim=latent_dim,
-                output_dim=cfg['encoder']['input_dim'][cfg['datasetname']]
+                output_dim=cfg['encoder']['input_dim'][cfg['dataset']['name']]
             )
     elif name == 'conv':
-        if cfg['datasetname'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
              return ConvDecoder(latent_dim=latent_dim, 
-                            out_channels=cfg['decoder']['out_channel'][cfg['datasetname']],
-                            size=cfg['decoder']['size'][cfg['datasetname']],
+                            out_channels=cfg['decoder']['out_channel'][cfg['dataset']['name']],
+                            size=cfg['decoder']['size'][cfg['dataset']['name']],
                             tanh=True
             )
         else:
             return ConvDecoder(latent_dim=latent_dim, 
-                            out_channels=cfg['decoder']['out_channel'][cfg['datasetname']],
-                            size=cfg['decoder']['size'][cfg['datasetname']]
+                            out_channels=cfg['decoder']['out_channel'][cfg['dataset']['name']],
+                            size=cfg['decoder']['size'][cfg['dataset']['name']]
             )
     elif name == 'mlp':
-        if cfg['datasetname'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
             return MLPDecoder(
                         latent_dim=latent_dim,
-                        output_dim=cfg['encoder']['input_dim'][cfg['datasetname']],
+                        output_dim=cfg['encoder']['input_dim'][cfg['dataset']['name']],
                         normalize=decoder_cfg.get('normalize', False),
                         bias=decoder_cfg.get('bias', False),
                         activation_fn=decoder_cfg.get('activation_fn', 'swish'),
@@ -97,7 +97,7 @@ def build_decoder(cfg):
         else:
             return MLPDecoder(
                     latent_dim=latent_dim,
-                    output_dim=cfg['encoder']['input_dim'][cfg['datasetname']],
+                    output_dim=cfg['encoder']['input_dim'][cfg['dataset']['name']],
                     normalize=decoder_cfg.get('normalize', False),
                     bias=decoder_cfg.get('bias', False),
                     activation_fn=decoder_cfg.get('activation_fn', 'swish'),

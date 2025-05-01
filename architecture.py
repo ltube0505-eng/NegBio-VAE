@@ -130,14 +130,22 @@ class MLPEncoder(nn.Module):
     
 
 class LinearDecoder(nn.Module):
-    def __init__(self, latent_dim=128, output_dim=784, normalize=True, normalize_dim=0):
+    def __init__(self, latent_dim=128, output_dim=784, normalize=True, normalize_dim=0, tanh=False):
         super().__init__()
         self.fc_dec = Linear(latent_dim, output_dim, normalize=normalize, normalize_dim=normalize_dim)
-        self.net = nn.Sequential(
-            # Linear(latent_dim, output_dim, normalize=normalize, normalize_dim=normalize_dim),
-            self.fc_dec,
-            nn.Sigmoid()
-        )
+        if tanh:
+            self.net = nn.Sequential(
+                # Linear(latent_dim, output_dim, normalize=normalize, normalize_dim=normalize_dim),
+                self.fc_dec,
+                nn.Tanh(),
+            )
+        else:
+
+            self.net = nn.Sequential(
+                # Linear(latent_dim, output_dim, normalize=normalize, normalize_dim=normalize_dim),
+                self.fc_dec,
+                nn.Sigmoid(),
+            )
 
     def forward(self, z):
         return self.net(z)
@@ -145,7 +153,7 @@ class LinearDecoder(nn.Module):
     
 class ConvDecoder(nn.Module):
     def __init__(self, latent_dim=128, out_channels=1,size=7,normalize=True, 
-                 normalize_dim=0):
+                 normalize_dim=0, tanh=False):
         super().__init__()
         self.size=size
         # Fully connected layer to expand from latent_dim to feature map
@@ -153,12 +161,21 @@ class ConvDecoder(nn.Module):
         self.fc_dec = Linear(latent_dim, 128 * self.size * self.size, normalize=normalize, normalize_dim=normalize_dim)
     
         # Transposed conv layers to upscale to 28x28
-        self.deconv = nn.Sequential(
-            nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),  # 7x7 -> 14x14
-            nn.ReLU(),
-            nn.ConvTranspose2d(64, out_channels, kernel_size=4, stride=2, padding=1),  # 14x14 -> 28x28
-            nn.Sigmoid(),
-        )
+        if tanh:
+            self.deconv = nn.Sequential(
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),  # 7x7 -> 14x14
+                nn.ReLU(),
+                nn.ConvTranspose2d(64, out_channels, kernel_size=4, stride=2, padding=1),  # 14x14 -> 28x28
+                nn.Tanh(),
+            )
+        else:
+            self.deconv = nn.Sequential(
+                nn.ConvTranspose2d(128, 64, kernel_size=4, stride=2, padding=1),  # 7x7 -> 14x14
+                nn.ReLU(),
+                nn.ConvTranspose2d(64, out_channels, kernel_size=4, stride=2, padding=1),  # 14x14 -> 28x28
+                nn.Sigmoid(),
+            )
+
 
     def forward(self, z):
         #z: 200 128
@@ -179,6 +196,7 @@ class MLPDecoder(nn.Module):
             normalize_dim: int = 0,
             bias: bool = False,
             activation_fn: str = "swish",
+            tanh=False
         ):
         super().__init__()
         self.fc_dec = Linear(
@@ -188,15 +206,25 @@ class MLPDecoder(nn.Module):
                 normalize_dim=normalize_dim,
                 bias=bias,
             )
-        self.net = nn.Sequential(
-            self.fc_dec,
-            get_act_fn(activation_fn),
-            ResDenseLayer(output_dim),
-            get_act_fn(activation_fn),
-            nn.Linear(in_features=output_dim, out_features=output_dim, bias=True),
-            nn.Sigmoid(),
-        )
+        if tanh:
+            self.net = nn.Sequential(
+                self.fc_dec,
+                get_act_fn(activation_fn),
+                ResDenseLayer(output_dim),
+                get_act_fn(activation_fn),
+                nn.Linear(in_features=output_dim, out_features=output_dim, bias=True),
+                nn.Tanh(),
+            )
+        else:
 
+            self.net = nn.Sequential(
+                self.fc_dec,
+                get_act_fn(activation_fn),
+                ResDenseLayer(output_dim),
+                get_act_fn(activation_fn),
+                nn.Linear(in_features=output_dim, out_features=output_dim, bias=True),
+                nn.Sigmoid(),
+            )
     def forward(self, z):
         return self.net(z)
 

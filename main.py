@@ -14,16 +14,18 @@ from data import DataModule, MNISTDataModule
 from vaetrainer import VAETrainer
 
 warnings.filterwarnings("ignore")
-
+GPU = '1' #设置GPU 0 1 2 可见
+os.environ['CUDA_VISIBLE_DEVICES'] =GPU
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("reparam_type", "gumbel", "Model type: gamma or gumbel")
-flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson or category")
-flags.DEFINE_string("dataset", "CIFAR16", "CIFAR16 or MNIST") #
+flags.DEFINE_string("kl", "gamma", "type: mc or analytical")
+flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson, laplace, gaussian or category")
+flags.DEFINE_string("dataset", "MNIST", "CIFAR16 or MNIST Omniglot svhn") #
 flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
-flags.DEFINE_integer("max_epochs", 500, "maximum epochs reached")
+flags.DEFINE_integer("max_epochs", 200, "maximum epochs reached")
 
 
 def main(argv):
@@ -50,11 +52,13 @@ def main(argv):
             with open("configs/gumbelconfig.yaml", "r") as f:
                 cfg = yaml.safe_load(f)
 
-    cfg['datasetname'] = FLAGS.dataset
+
     cfg['dataset']['name'] = FLAGS.dataset
     cfg['model']['name'] = FLAGS.model_type
+    cfg['model']['kl'] = FLAGS.kl
+    
 
-
+    
     if cfg['encoder']['type'] == "conv":
         flatten_flag = False
     else:
@@ -74,14 +78,14 @@ def main(argv):
     #     if "logits" in name:
     #         print(f"  ✅ {name}: requires_grad={param.requires_grad}, shape={param.shape}")
 
-    if FLAGS.local:
+    """if FLAGS.local:
         accelerator = "cpu"
         devices = 1
-        strategy = None  
-    else:
-        accelerator = "gpu"
-        devices = [3]
-        strategy = "ddp"
+        strategy = None
+    else:"""
+    accelerator = "gpu"
+    devices = [0]
+    strategy = "ddp"
 
             
     trainer_args = {
@@ -99,7 +103,6 @@ def main(argv):
         #"accelerator": "auto",
         "logger": wandb.WandbLogger(project=project_name, name=name, save_code=False),
         "gradient_clip_val": 1.0,
-        
         "accelerator": accelerator,
         'devices':devices
         # 'strategy':"ddp" if accelerator == "gpu" else None
@@ -108,7 +111,7 @@ def main(argv):
         trainer_args["strategy"] = strategy
     trainer_args["logger"].watch(model, log="all")
 
-
+    
     trainer = pl.Trainer(
         **trainer_args,
         default_root_dir=checkpoint_dir,

@@ -16,10 +16,10 @@ from distribution import Laplace
 warnings.filterwarnings("ignore")
 import wandb as wdb
 from model import GenericVAE
-from utils import (build_decoder, build_encoder, compute_fid,
-                   compute_inception_score, find_last_contiguous_zeros,
-                   get_overdispersion_index, log_dead_neurons_diagnostics,
-                   log_latent_mean_vs_var, plot_fano, spike_count_hist)
+from utils import (build_decoder, build_encoder, compute_inception_score,
+                   find_last_contiguous_zeros, get_overdispersion_index,
+                   log_dead_neurons_diagnostics, log_latent_mean_vs_var,
+                   plot_fano, spike_count_hist)
 
 
 class VAETrainer(pl.LightningModule):
@@ -31,7 +31,7 @@ class VAETrainer(pl.LightningModule):
 
         self.model_name = cfg['model']['name']
         base_latent_dim = cfg['model']['latent_dim']
-    
+        
        
         self.model = GenericVAE(
                 encoder=encoder,
@@ -44,7 +44,7 @@ class VAETrainer(pl.LightningModule):
                 latent_act= cfg['model']['latent_act']
             )
         
-
+        self.log_images = self.cfg.get('eval', {}).get('log_images', True)
         opt_name = cfg['optimizer']['name'].lower()
         opt_map = {'adam': torch.optim.Adam, 'sgd': torch.optim.SGD}
         self.opt = opt_map[opt_name]
@@ -52,11 +52,10 @@ class VAETrainer(pl.LightningModule):
 
         self.beta = 0.0
         self.train_length = None
-        fid_feat_dim = cfg.get('eval', {}).get('fid_feature', 64)
-        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, 
-                                                   reset_real_features=True, 
-                                                   normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
-        self.log_images = cfg.get('eval', {}).get('log_images', True)
+        fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
+        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
+        
+
         self._val_kl_diags = []
         self._val_latents = []
         self._val_recons = []
@@ -122,9 +121,9 @@ class VAETrainer(pl.LightningModule):
         MNIST:200 784 ->200 1 28 28
         CIFAR16:512 768 -> 512 3 16 16
         """
+        
         if self.cfg['decoder']['type']=="conv":
-            
-            if self.cfg['dataset']['name'] == 'MNIST'or 'Omniglot':
+            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 x = batch[0].view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = batch[0].view(-1, 3, 16, 16)
@@ -140,9 +139,7 @@ class VAETrainer(pl.LightningModule):
         return loss
     
     def validation_step(self, batch, batch_idx):
-
         x = batch[0].view(batch[0].size(0), -1) 
-
         if self.model_name == "poisson":
             dist, du, z, y = self(batch)
             kl_diag = dist.kl(self.model.prior, du) 
@@ -154,8 +151,7 @@ class VAETrainer(pl.LightningModule):
                 self.model.log_r_prior, 
                 self.model.logit_p_prior, 
                 logit_p
-                )
-            
+                ) 
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl_diag = self.model.dist_class.comput_kl(logit_p)
@@ -169,46 +165,37 @@ class VAETrainer(pl.LightningModule):
         kl = kl_diag.mean()
             
         if self.cfg['decoder']['type']=="conv":
-            if self.cfg['dataset']['name'] == 'MNIST' or 'Omniglot':
+            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 x = x.view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = x.view(-1, 3, 16, 16)
         recon_loss = self.model.mse_loss(x, y)
-
-     
         val_elbo = recon_loss + kl
-
         loss = self.beta*kl + recon_loss
         overdispersion_index = get_overdispersion_index(z)
-
         self.log('val_recon_loss', recon_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_kl', kl.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_elbo', val_elbo.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_elbo_mc', (kl + recon_loss).item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('l0_sparsity', (z == 0).float().mean().item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('overdispersion_index', overdispersion_index, on_step=True, on_epoch=True, prog_bar=True)
-
-        if self.cfg['datasetname'] == 'MNIST' or 'Omniglot':
+        if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
             real_imgs = batch[0].repeat(1, 3, 1, 1)  # MNIST 是 1 通道，要扩成 3 通道
             recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
-        elif self.cfg['datasetname'] == 'CIFAR16':
+        elif self.cfg['dataset']['name'] == 'CIFAR16':
             real_imgs = batch[0].view(-1, 3, 16, 16)
             recon_imgs = y.view(-1, 3, 16, 16)
-        
         self._val_kl_diags.append(kl_diag.detach().cpu()) 
         self._val_latents.append(z.detach().cpu())
         self._val_recons.append(recon_imgs.detach().cpu())
         self._val_inputs.append(real_imgs.detach().cpu())
-        # self.fid_metric.update(real_imgs, real=True)
-        # self.fid_metric.update(recon_imgs, real=False)
-        self.fid_metric.update(real_imgs.to(self.fid_metric.device), real=True)
-        self.fid_metric.update(recon_imgs.to(self.fid_metric.device), real=False)
-
+        self.fid_metric.update(real_imgs.to(self.device), real=True)
+        self.fid_metric.update(recon_imgs.to(self.device), real=False)
         if batch_idx % 50 == 0:
-            if self.cfg['datasetname'] == 'MNIST' or 'Omniglot':
+            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
-            elif self.cfg['datasetname'] == 'CIFAR16':
+            elif self.cfg['dataset']['name'] == 'CIFAR16':
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 3, 16, 16), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 3, 16, 16), nrow=10)
             else:
@@ -273,8 +260,8 @@ class VAETrainer(pl.LightningModule):
         model_type = cfg['name']
 
         rules = {
-        ('pm', 1e-2): (model_type == 'poisson' and dataset == 'MNIST'or 'Omniglot'),
-        ('nb', 1e-2): (model_type == 'negbio' and dataset == 'MNIST'or 'Omniglot'),
+        ('pm', 1e-2): (model_type == 'poisson' and dataset in ['MNIST', "Omniglot"]),
+        ('nb', 1e-2): (model_type == 'negbio' and dataset in ['MNIST', "Omniglot"]),
         ('ll', 1e-1): (model_type == 'laplace' and enc_type == 'linear'),
         ('gl', 1e-1): (model_type == 'gaussian' and enc_type == 'linear' and dataset != 'CIFAR10-PATCHES'),
         ('glc', 85e-3): (model_type == 'gaussian' and enc_type == 'linear' and dataset == 'CIFAR10-PATCHES'),
@@ -303,7 +290,125 @@ class VAETrainer(pl.LightningModule):
         dead = log_kl < bins[idx] if idx is not None else kl < 3e-4
         return dead.astype(bool)
 
+
+    # def on_fit_end(self, end=False):
+
+    #     # Build save dirs
+    #     if end:
+    #         save_dirs = {
+    #             "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
+    #             "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
+    #             "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
+    #             "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
+    #         }
+    #     else:
+    #         save_dirs = {
+    #             "latents": os.path.join(".save/", "latents"),
+    #             "fano": os.path.join(".save/", "analysis", "fano"),
+    #             "meanvar": os.path.join(".save/", "analysis", "meanvar"),
+    #             "spike_hist": os.path.join(".save/", "analysis", "spike_hist"),
+    #         }
+
+    #     for path in save_dirs.values():
+    #         os.makedirs(path, exist_ok=True)
+
+
+        
+    #     # ========== Save latent z ==========
+    #     if len(self._val_latents) > 0:
+    #         all_z = torch.cat(self._val_latents, dim=0).numpy()
+    #         np.save(os.path.join(save_dirs["latents"], "val_z_all.npy"), all_z)
+    #         print(f"[✔] Saved all validation z")
+    #     else:
+    #         print("[⚠] No validation z collected to save.")
+
+
+    #     # ===== Overdispersion index & mean-var scatter =====
+    #     overdispersion_index = get_overdispersion_index(all_z)
+
+    #     log_latent_mean_vs_var(
+    #         logger=self.logger.experiment,
+    #         z=all_z,
+    #         save_dir=save_dirs['meanvar'],
+    #         step_name="final",
+    #         caption="Latent Mean vs Variance"
+    #     )
+
+    #     #===== Fano plot=================
+    #     plot_fano(all_z, save_dirs["fano"],self.logger)
+
+    #     #===== Hist plot==================
+    #     spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
+
+    #     # ===== Dead units and KL diagnostic =====
+
+    #     # ========== FID ==========
+    #     if hasattr(self, "fid_metric") and self.fid_metric is not None:
+    #         try:
+    #             fid_score = self.fid_metric.compute().item()
+    #             print(f"[🧬] Final FID: {fid_score:.4f}")
+    #         except Exception as e:
+    #             fid_score = None
+    #             print(f"[⚠] Failed to compute FID: {e}")
+    #     else:
+    #         fid_score = None
+    #         print("[⚠] No FID metric found.")
+
+    #     kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
+    #     dead_mask = self.find_dead_neurons(kl=kl_diag)
+    #     dnr = dead_mask.mean().item()
+        
+    #     self.logger.experiment.log({
+    #         "final_overdispersion_index": overdispersion_index,
+    #         "final_dnr": dnr
+    #     })
+
+    #     log_dead_neurons_diagnostics(
+    #             kl_diag=kl_diag,
+    #             dead_mask=dead_mask,
+    #             logger=self.logger,
+    #             step_name=f"val_epoch_{self.current_epoch}"
+    #         )
+        
+    #     # ========== Collect reconstructions and inputs ==========
+    #     if hasattr(self, "_val_recons") and len(self._val_recons) > 0:
+    #         recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1)  # [N, 3, H, W]
+    #     else:
+    #         print("[⚠] No reconstruction images found.")
+    #         recon_all = None
+
+    #     if hasattr(self, "_val_inputs") and len(self._val_inputs) > 0:
+    #         input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1)
+    #     else:
+    #         input_all = None
+
+    #     # ========== MSE ==========
+    #     if input_all is not None and recon_all is not None:
+    #         mse = F.mse_loss(recon_all, input_all).item()
+    #         print(f"[📐] Final MSE: {mse:.6f}")
+    #     else:
+    #         mse = None
+    #         print("[⚠] MSE skipped due to missing recon/input.")
+
+    #     # ========== Inception Score ==========
+    #     if recon_all is not None:
+    #         is_mean, is_std = compute_inception_score(recon_all,device=self.device)
+    #         print(f"[🌈] FINAL IS: {is_mean:.4f} ± {is_std:.4f}")
+    #     else:
+    #         is_mean, is_std = None, None
+    #         print("[⚠] Inception Score skipped due to missing recon.")
+        
+    #     # ===========PRINT OUT RESULTS================
+    #     print("LATENT DIAGNOSITICS:")
+    #     print(f"[📊] Overdispersion Index (ODI): {overdispersion_index:.4f}")
+    #     print(f"[💀] Dead Neuron Rate (DNR): {dnr:.4f}")
+
+
     def on_fit_end(self, end=False):
+        
+        fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
+        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
+        
         # ========== Save dirs ==========
         if end:
             save_dirs = {
@@ -314,15 +419,14 @@ class VAETrainer(pl.LightningModule):
             }
         else:
             save_dirs = {
-                "latents": os.path.join(".save/", self.cfg['datasetname'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "latents"),
-                "fano": os.path.join(".save/", self.cfg['datasetname'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "fano"),
-                "meanvar": os.path.join(".save/", self.cfg['datasetname'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "meanvar"),
-                "spike_hist": os.path.join(".save/", self.cfg['datasetname'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "spike_hist"),
+                "latents": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "latents"),
+                "fano": os.path.join(".save/", self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'],"analysis", "fano"),
+                "meanvar": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "analysis", "meanvar"),
+                "spike_hist": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "analysis", "spike_hist"),
             }
 
         for path in save_dirs.values():
             os.makedirs(path, exist_ok=True)
-
         # ========== Save latent z ==========
         if len(self._val_latents) > 0:
             all_z = torch.cat(self._val_latents, dim=0).numpy()
@@ -331,7 +435,6 @@ class VAETrainer(pl.LightningModule):
         else:
             print("[⚠] No validation z collected to save.")
             return
-
         # ========== Overdispersion Index ==========
         overdispersion_index = get_overdispersion_index(all_z)
         log_latent_mean_vs_var(
@@ -341,7 +444,6 @@ class VAETrainer(pl.LightningModule):
             step_name="final",
             caption="Latent Mean vs Variance"
         )
-
         # ========== Fano and Spike Histogram ==========
         plot_fano(all_z, save_dirs["fano"], self.logger)
         spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
@@ -356,41 +458,50 @@ class VAETrainer(pl.LightningModule):
         #     logger=self.logger,
         #     step_name=f"val_epoch_{self.current_epoch}"
         # )
-
         # ========== Recon input collection ==========
-        # max_samples = 5000
-        recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
-        input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
-
-        # recon_imgs = recon_all[:max_samples]
-        # input_imgs = input_all[:max_samples]
+        if self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+            recon_all = ((torch.cat(self._val_recons, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+            input_all = ((torch.cat(self._val_inputs, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
+        else:
+            recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+            input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
         
+        max_samples = 5000
+
+        if recon_all.size(0) > max_samples:
+            recon_sample = recon_all[:max_samples].cuda()
+            input_sample = input_all[:max_samples].cuda()
+        #recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+        #input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
         
         # ========== MSE ==========
-        if input_all is not None and recon_all is not None:
-            mse = F.mse_loss(recon_all, input_all).item()
+        if input_sample is not None and recon_sample is not None:
+            mse = F.mse_loss(recon_sample, input_sample).item()
         else:
             mse = None
             print("[⚠] MSE skipped due to missing recon/input.")
 
-
         # ========== Inception Score ==========
-        if recon_all is not None:
+        if recon_sample is not None:
             is_mean, is_std = compute_inception_score(recon_all, device=self.device)
         else:
             is_mean, is_std = None, None
             print("[⚠] Inception Score skipped due to missing recon.")
 
         # ========== FID ==========
-        try:
-            input_features = input_all.view(input_all.size(0), -1).double().cpu()
-            recon_features = recon_all.view(recon_all.size(0), -1).double().cpu()
-            fid_score = compute_fid(input_features, recon_features)
+        #try:
+        with torch.no_grad():
+            for i in range(0, recon_sample.size(0), 64):
+                self.fid_metric.update(input_sample[i:i+64], real=True)
+                self.fid_metric.update(recon_sample[i:i+64], real=False)
 
-            # fid_score = self.fid_metric.compute().item()
-        except Exception as e:
+        fid_score = self.fid_metric.compute().item()
+        """self.fid_metric.update(input_all.cuda(), real=True)
+        self.fid_metric.update(recon_all.cuda(), real=False)
+        fid_score = self.fid_metric.compute().item()"""
+        """except Exception as e:
             fid_score = None
-            print(f"[⚠] Failed to compute FID: {e}")
+            print(f"[⚠] Failed to compute FID: {e}")"""
 
         # ========== PRINT Final Results ==========
         print("\n===== 🎯 Final Performance Metrics =====")
@@ -404,7 +515,7 @@ class VAETrainer(pl.LightningModule):
 
         # ========== WandB Logging ==========
         log_dict = {
-            "final_overdispersion_index": overdispersion_index,
+            #"final_overdispersion_index": overdispersion_index,
             "final_dnr": dnr
         }
         if mse is not None:
