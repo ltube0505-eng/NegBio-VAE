@@ -60,7 +60,10 @@ class VAETrainer(pl.LightningModule):
         self._val_latents = []
         self._val_recons = []
         self._val_inputs = []
+        self._val_oi_list = []
+        self._val_dnr = None
         self._final_val_fid = None
+
 
     def setup(self, stage = None):
         if hasattr(self.trainer.datamodule, 'train_steps_per_epoch'):
@@ -173,6 +176,7 @@ class VAETrainer(pl.LightningModule):
         val_elbo = recon_loss + kl
         loss = self.beta*kl + recon_loss
         overdispersion_index = get_overdispersion_index(z)
+        self._val_oi_list.append(overdispersion_index)
         self.log('val_recon_loss', recon_loss.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_kl', kl.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('val_elbo', val_elbo.item(), on_step=True, on_epoch=True, prog_bar=True)
@@ -189,9 +193,10 @@ class VAETrainer(pl.LightningModule):
         self._val_latents.append(z.detach().cpu())
         self._val_recons.append(recon_imgs.detach().cpu())
         self._val_inputs.append(real_imgs.detach().cpu())
-        self.fid_metric.update(real_imgs.to(self.device), real=True)
-        self.fid_metric.update(recon_imgs.to(self.device), real=False)
-        if batch_idx % 50 == 0:
+        # self._val_mse.append(recon_loss.detach().cpu())
+        # self.fid_metric.update(real_imgs.to(self.device), real=True)
+        # self.fid_metric.update(recon_imgs.to(self.device), real=False)
+        if batch_idx % 100 == 0:
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
@@ -204,47 +209,59 @@ class VAETrainer(pl.LightningModule):
                 'recons': wdb.Image(fig_y, caption="recons"),
                 'inputs': wdb.Image(fig_x, caption="inputs"),
             })
-            log_latent_mean_vs_var(
-                logger=self.logger.experiment, 
-                z=z, 
-                save_dir=None,
-                step_name=f"val_epoch_{self.current_epoch}", 
-                caption="Latent mean vs var",
-                savelocal=False
-            )
+            # log_latent_mean_vs_var(
+            #     logger=self.logger.experiment, 
+            #     z=z, 
+            #     save_dir=None,
+            #     step_name=f"val_epoch_{self.current_epoch}", 
+            #     caption="Latent mean vs var",
+            #     savelocal=False
+            # )
 
         return loss
     
     def on_validation_epoch_end(self):
 
-        if self.current_epoch % 50 ==0 or self.current_epoch == self.trainer.max_epochs - 1:
-            if len(self._val_kl_diags) > 0:
-                kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()# shape: [latent_dim]
-                
-                dead_mask = self.find_dead_neurons(kl=kl_diag)
-                dnr = dead_mask.mean().item()
-
-                self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
-                self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
-                # log_dead_neurons_diagnostics(
-                #     kl_diag=kl_diag,
-                #     dead_mask=dead_mask,
-                #     logger=self.logger,
-                #     step_name=f"val_epoch_{self.current_epoch}"
-                # )
-            else:
-                print("[Warning] No KL diagnostics found for this epoch.")
+        # if self.current_epoch % 50 ==0 or self.current_epoch == self.trainer.max_epochs - 1:
+        if len(self._val_kl_diags) > 0:
+            kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()# shape: [latent_dim]
             
+            dead_mask = self.find_dead_neurons(kl=kl_diag)
+            dnr = dead_mask.mean().item()
+            self._val_dnr = dnr
+            # print(f"[💀] Dead Neuron Rate (DNR): {dnr:.4f}")
+
+            self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
+            self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
+            # log_dead_neurons_diagnostics(
+            #     kl_diag=kl_diag,
+            #     dead_mask=dead_mask,
+            #     logger=self.logger,
+            #     step_name=f"val_epoch_{self.current_epoch}"
+            # )
+        else:
+            print("[Warning] No KL diagnostics found for this epoch.")
+        
             #self._val_latents = []
             # self._val_kl_diags = []   # empty the kl_diags
             
             # fid_score = self.fid_metric.compute().item()
             # self.log("val_fid", fid_score, prog_bar=True)
-            self.log("dead_neuron_rate",dnr, prog_bar=True)
-            # self.logger.experiment.log({"val_fid": fid_score})
-            self.logger.experiment.log({"dnr": dnr})
+        self.log("dead_neuron_rate",dnr, prog_bar=True)
+        # self.logger.experiment.log({"val_fid": fid_score})
+        self.logger.experiment.log({"dnr": dnr})
             # self._final_val_fid = fid_score  
             # self.fid_metric.reset()
+
+        if len(self._val_oi_list) > 0:
+            avg_oi = sum(self._val_oi_list) / len(self._val_oi_list)
+            # print(f"[📊] Overdispersion Index (OI): {avg_oi:.4f}")
+            self.log("overdispersion_index_epoch", avg_oi)
+            self.logger.experiment.log({"epoch_oi": avg_oi})
+            self.oi = avg_oi
+        else:
+            print("[⚠] No OI values collected.")
+
             
     def configure_optimizers(self):
         return self.opt(self.parameters(), **self.opt_params)
@@ -291,118 +308,6 @@ class VAETrainer(pl.LightningModule):
         return dead.astype(bool)
 
 
-    # def on_fit_end(self, end=False):
-
-    #     # Build save dirs
-    #     if end:
-    #         save_dirs = {
-    #             "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
-    #             "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
-    #             "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
-    #             "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
-    #         }
-    #     else:
-    #         save_dirs = {
-    #             "latents": os.path.join(".save/", "latents"),
-    #             "fano": os.path.join(".save/", "analysis", "fano"),
-    #             "meanvar": os.path.join(".save/", "analysis", "meanvar"),
-    #             "spike_hist": os.path.join(".save/", "analysis", "spike_hist"),
-    #         }
-
-    #     for path in save_dirs.values():
-    #         os.makedirs(path, exist_ok=True)
-
-
-        
-    #     # ========== Save latent z ==========
-    #     if len(self._val_latents) > 0:
-    #         all_z = torch.cat(self._val_latents, dim=0).numpy()
-    #         np.save(os.path.join(save_dirs["latents"], "val_z_all.npy"), all_z)
-    #         print(f"[✔] Saved all validation z")
-    #     else:
-    #         print("[⚠] No validation z collected to save.")
-
-
-    #     # ===== Overdispersion index & mean-var scatter =====
-    #     overdispersion_index = get_overdispersion_index(all_z)
-
-    #     log_latent_mean_vs_var(
-    #         logger=self.logger.experiment,
-    #         z=all_z,
-    #         save_dir=save_dirs['meanvar'],
-    #         step_name="final",
-    #         caption="Latent Mean vs Variance"
-    #     )
-
-    #     #===== Fano plot=================
-    #     plot_fano(all_z, save_dirs["fano"],self.logger)
-
-    #     #===== Hist plot==================
-    #     spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
-
-    #     # ===== Dead units and KL diagnostic =====
-
-    #     # ========== FID ==========
-    #     if hasattr(self, "fid_metric") and self.fid_metric is not None:
-    #         try:
-    #             fid_score = self.fid_metric.compute().item()
-    #             print(f"[🧬] Final FID: {fid_score:.4f}")
-    #         except Exception as e:
-    #             fid_score = None
-    #             print(f"[⚠] Failed to compute FID: {e}")
-    #     else:
-    #         fid_score = None
-    #         print("[⚠] No FID metric found.")
-
-    #     kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
-    #     dead_mask = self.find_dead_neurons(kl=kl_diag)
-    #     dnr = dead_mask.mean().item()
-        
-    #     self.logger.experiment.log({
-    #         "final_overdispersion_index": overdispersion_index,
-    #         "final_dnr": dnr
-    #     })
-
-    #     log_dead_neurons_diagnostics(
-    #             kl_diag=kl_diag,
-    #             dead_mask=dead_mask,
-    #             logger=self.logger,
-    #             step_name=f"val_epoch_{self.current_epoch}"
-    #         )
-        
-    #     # ========== Collect reconstructions and inputs ==========
-    #     if hasattr(self, "_val_recons") and len(self._val_recons) > 0:
-    #         recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1)  # [N, 3, H, W]
-    #     else:
-    #         print("[⚠] No reconstruction images found.")
-    #         recon_all = None
-
-    #     if hasattr(self, "_val_inputs") and len(self._val_inputs) > 0:
-    #         input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1)
-    #     else:
-    #         input_all = None
-
-    #     # ========== MSE ==========
-    #     if input_all is not None and recon_all is not None:
-    #         mse = F.mse_loss(recon_all, input_all).item()
-    #         print(f"[📐] Final MSE: {mse:.6f}")
-    #     else:
-    #         mse = None
-    #         print("[⚠] MSE skipped due to missing recon/input.")
-
-    #     # ========== Inception Score ==========
-    #     if recon_all is not None:
-    #         is_mean, is_std = compute_inception_score(recon_all,device=self.device)
-    #         print(f"[🌈] FINAL IS: {is_mean:.4f} ± {is_std:.4f}")
-    #     else:
-    #         is_mean, is_std = None, None
-    #         print("[⚠] Inception Score skipped due to missing recon.")
-        
-    #     # ===========PRINT OUT RESULTS================
-    #     print("LATENT DIAGNOSITICS:")
-    #     print(f"[📊] Overdispersion Index (ODI): {overdispersion_index:.4f}")
-    #     print(f"[💀] Dead Neuron Rate (DNR): {dnr:.4f}")
-
 
     def on_fit_end(self, end=False):
         
@@ -436,22 +341,22 @@ class VAETrainer(pl.LightningModule):
             print("[⚠] No validation z collected to save.")
             return
         # ========== Overdispersion Index ==========
-        overdispersion_index = get_overdispersion_index(all_z)
-        log_latent_mean_vs_var(
-            logger=self.logger.experiment,
-            z=all_z,
-            save_dir=save_dirs['meanvar'],
-            step_name="final",
-            caption="Latent Mean vs Variance"
-        )
+        #overdispersion_index = get_overdispersion_index(all_z)
+        # log_latent_mean_vs_var(
+        #     logger=self.logger.experiment,
+        #     z=all_z,
+        #     save_dir=save_dirs['meanvar'],
+        #     step_name="final",
+        #     caption="Latent Mean vs Variance"
+        # )
         # ========== Fano and Spike Histogram ==========
-        plot_fano(all_z, save_dirs["fano"], self.logger)
-        spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
+        # plot_fano(all_z, save_dirs["fano"], self.logger)
+        # spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
 
         # ========== KL diagnostic & Dead Neuron ==========
-        kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
-        dead_mask = self.find_dead_neurons(kl=kl_diag)
-        dnr = dead_mask.mean().item()
+        #kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
+        #dead_mask = self.find_dead_neurons(kl=kl_diag)
+        #dnr = dead_mask.mean().item()
         # log_dead_neurons_diagnostics(
         #     kl_diag=kl_diag,
         #     dead_mask=dead_mask,
@@ -459,18 +364,34 @@ class VAETrainer(pl.LightningModule):
         #     step_name=f"val_epoch_{self.current_epoch}"
         # )
         # ========== Recon input collection ==========
-        if self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
-            recon_all = ((torch.cat(self._val_recons, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
-            input_all = ((torch.cat(self._val_inputs, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
-        else:
-            recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
-            input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
+        # if self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        #     recon_all = ((torch.cat(self._val_recons, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+        #     input_all = ((torch.cat(self._val_inputs, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
+        # else:
+        #     recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+        #     input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
+        
+        # max_samples = 5000
+
+        # if recon_all.size(0) > max_samples:
+        #     recon_sample = recon_all[:max_samples].cuda()
+        #     input_sample = input_all[:max_samples].cuda()
+        # else:
+        #     recon_sample = recon_all
+        #     input_sample = input_all
+        
+        
         
         max_samples = 5000
+        normalize_needed = self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']
 
-        if recon_all.size(0) > max_samples:
-            recon_sample = recon_all[:max_samples].cuda()
-            input_sample = input_all[:max_samples].cuda()
+        recon_sample = _select_and_stack(self._val_recons, max_samples, normalize=normalize_needed)
+        input_sample = _select_and_stack(self._val_inputs, max_samples, normalize=normalize_needed)
+
+        if recon_sample is not None:
+            recon_sample = recon_sample.to(self.device)
+        if input_sample is not None:
+            input_sample = input_sample.to(self.device)
         #recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
         #input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
         
@@ -483,7 +404,7 @@ class VAETrainer(pl.LightningModule):
 
         # ========== Inception Score ==========
         if recon_sample is not None:
-            is_mean, is_std = compute_inception_score(recon_all, device=self.device)
+            is_mean, is_std = compute_inception_score(recon_sample, device=self.device)
         else:
             is_mean, is_std = None, None
             print("[⚠] Inception Score skipped due to missing recon.")
@@ -509,14 +430,14 @@ class VAETrainer(pl.LightningModule):
         if fid_score is not None: print(f"[🧬] FID:             {fid_score:.4f}")
         if is_mean is not None:   print(f"[🌈] IS: {is_mean:.4f} ± {is_std:.4f}")
 
-        print("\n===== 🧠 Latent Diagnostics =====")
-        print(f"[📊] ODI: {overdispersion_index:.4f}")
-        print(f"[💀] DNR:     {dnr:.4f}")
+        # print("\n===== 🧠 Latent Diagnostics =====")
+        print(f"[📊] ODI: {self.oi:.4f}")
+        print(f"[💀] DNR:     {self._val_dnr:.4f}")
 
         # ========== WandB Logging ==========
         log_dict = {
             #"final_overdispersion_index": overdispersion_index,
-            "final_dnr": dnr
+            "final_dnr": self._val_dnr
         }
         if mse is not None:
             log_dict["final_mse"] = mse
@@ -533,6 +454,27 @@ class VAETrainer(pl.LightningModule):
 
 
         
+def _select_and_stack(tensor_list, max_samples, normalize=False):
+    selected = []
+    total = 0
+    for t in tensor_list:
+        if t is None:
+            continue
+        if total + t.size(0) > max_samples:
+            selected.append(t[:max_samples - total])
+            break
+        selected.append(t)
+        total += t.size(0)
+
+    if not selected:
+        return None
+
+    out = torch.cat(selected, dim=0)
+    if normalize:
+        out = ((out + 1) / 2).clamp(0, 1)
+    else:
+        out = out.clamp(0, 1)
+    return out
 
 
 
