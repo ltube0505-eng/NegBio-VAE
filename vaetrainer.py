@@ -310,9 +310,10 @@ class VAETrainer(pl.LightningModule):
 
 
     def on_fit_end(self, end=False):
-        
+        device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.to(device)
         fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
-        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
+        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to(device)
         
         # ========== Save dirs ==========
         if end:
