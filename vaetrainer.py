@@ -377,7 +377,7 @@ class VAETrainer(pl.LightningModule):
     def on_test_end(self, end=False):
 
         fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
-        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to(device)
+        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to(self.device)
 
         # ========== Save dirs ==========
         if end:
