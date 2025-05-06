@@ -11,33 +11,45 @@ dataset:
 # ===============================
 model:
   name: "poisson"              # or "poisson"
-  latent_dim: 128             # dimension of latent variable z
-  reparam_type: ""
-  max_count: -1
-  tau: -1
+  latent_dim: 256             # dimension of latent variable z
+  reparam_type: "gumbel"       # "gumbel" or "gamma"
+  max_count: 5
+  tau: 1.0
+  kl: "analytical"     # mc or analytical
+  latent_act: "sigmoid"
 # ===============================
 # Encoder configuration
 # ===============================
 encoder:
-  type: "linear"                # or "linear"
+  type: "conv"                # or "linear" "conv" "mlp"
   input_dim:                # only needed for linear encoder
     MNIST: 784
     CIFAR16: 768
-  latent_dim: 128
-
+    Omniglot: 28
+  latent_dim: 256
+  use_norm: true
+  bias: true
+  activation_fn: "swish"         #{'swish', 'elu', 'relu', 'leaky_relu'}
+  use_bn: false
+  use_se: true
+  res_eps: 1.0
+  enc_norm: true
+  enc_bias: true
 # ===============================
 # Decoder configuration
 # ===============================
 decoder:
-  type: "linear"                # or "linear"
-  output_dim: 784             # only needed for linear decoder
-  latent_dim: 128
-  out_channel:                 # only needed for conv decoder
+  type: "conv"                # or "linear" "conv" "mlp"
+  output_dim: 784            # only needed for linear decoder
+  latent_dim: 256
+  out_channel:                # only needed for conv decoder
     MNIST: 1
     CIFAR16: 3
+    Omniglot: 1
   size:
     MNIST: 7
-    CIFAR16: 3
+    CIFAR16: 4
+    Omniglot: 7
 # ===============================
 # Optimizer configuration
 # ===============================
