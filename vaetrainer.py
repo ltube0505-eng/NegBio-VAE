@@ -25,14 +25,14 @@ from utils import (build_decoder, build_encoder, compute_inception_score,
 class VAETrainer(pl.LightningModule):
     def __init__(self, cfg, **args):
         super(VAETrainer, self).__init__()
-        self.cfg = cfg 
+        self.cfg = cfg
         encoder = build_encoder(cfg)
         decoder = build_decoder(cfg)
 
         self.model_name = cfg['model']['name']
         base_latent_dim = cfg['model']['latent_dim']
-        
-       
+
+
         self.model = GenericVAE(
                 encoder=encoder,
                 decoder=decoder,
@@ -43,7 +43,7 @@ class VAETrainer(pl.LightningModule):
                 tau = cfg['model']['tau'],
                 latent_act= cfg['model']['latent_act']
             )
-        
+
         self.log_images = self.cfg.get('eval', {}).get('log_images', True)
         opt_name = cfg['optimizer']['name'].lower()
         opt_map = {'adam': torch.optim.Adam, 'sgd': torch.optim.SGD}
@@ -54,7 +54,7 @@ class VAETrainer(pl.LightningModule):
         self.train_length = None
         fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
         self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
-        
+
 
         self._val_kl_diags = []
         self._val_latents = []
@@ -88,10 +88,10 @@ class VAETrainer(pl.LightningModule):
             return self.model(x[0].flatten(1))
         else:
             return self.model(x[0])
-    
+
     def training_step(self, batch, batch_idx):
         x = batch[0].view(batch[0].size(0), -1)
-        
+
         epoch = self.current_epoch + batch_idx/self.train_length
         self.beta = min(1.0, 5*epoch/250)
         self.model.t = max((1.0 - 0.95*epoch/250), 0.05)
@@ -102,19 +102,19 @@ class VAETrainer(pl.LightningModule):
             dist, du, z, y = self(batch)
             kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
-            dist, logit_p, z, y = self(batch)    
+            dist, logit_p, z, y = self(batch)
             if self.cfg['model']['kl'] == "mc":
-                kl =  self.model.dist_class.kl_mc(self.model.log_r_prior, 
-                                          self.model.logit_p_prior, 
+                kl =  self.model.dist_class.kl_mc(self.model.log_r_prior,
+                                          self.model.logit_p_prior,
                                           logit_p
                                         ).mean()
-                
+
             else:
-                kl = self.model.dist_class.kl(self.model.log_r_prior, 
-                                          self.model.logit_p_prior, 
+                kl = self.model.dist_class.kl(self.model.log_r_prior,
+                                          self.model.logit_p_prior,
                                           logit_p
                                         ).mean()
-                
+
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl = self.model.dist_class.comput_kl(logit_p).mean()
@@ -126,42 +126,42 @@ class VAETrainer(pl.LightningModule):
         elif self.model_name == "gaussian":
             dist, (loc, log_scale), z, y = self(batch)
             kl = dist.kl().mean()
-            
+
         """
         MNIST:200 784 ->200 1 28 28
         CIFAR16:512 768 -> 512 3 16 16
         """
-        
+
         if self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 x = batch[0].view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = batch[0].view(-1, 3, 16, 16)
-    
+
         recon_loss = self.model.mse_loss(x, y)
 
-        loss = self.beta*kl + recon_loss 
+        loss = self.beta*kl + recon_loss
 
         self.log('train_loss', loss.item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log('train_elbo', (kl + recon_loss).item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log("latent mean", (z.mean()).item(), on_step=True, on_epoch=True, prog_bar=True)
         self.log("latent std", (z.std()).item(), on_step=True, on_epoch=True, prog_bar=True)
         return loss
-    
+
     def validation_step(self, batch, batch_idx):
-        x = batch[0].view(batch[0].size(0), -1) 
+        x = batch[0].view(batch[0].size(0), -1)
         if self.model_name == "poisson":
             dist, du, z, y = self(batch)
-            kl_diag = dist.kl(self.model.prior, du) 
+            kl_diag = dist.kl(self.model.prior, du)
             # kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
             dist, logit_p, z, y = self(batch)
             # batch hidden
             kl_diag = self.model.dist_class.kl(
-                self.model.log_r_prior, 
-                self.model.logit_p_prior, 
+                self.model.log_r_prior,
+                self.model.logit_p_prior,
                 logit_p
-                ) 
+                )
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl_diag = self.model.dist_class.comput_kl(logit_p)
@@ -173,7 +173,7 @@ class VAETrainer(pl.LightningModule):
             kl_diag = dist.kl()
 
         kl = kl_diag.mean()
-            
+
         if self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 x = x.view(-1, 1, 28, 28)
@@ -196,7 +196,7 @@ class VAETrainer(pl.LightningModule):
         elif self.cfg['dataset']['name'] == 'CIFAR16':
             real_imgs = batch[0].view(-1, 3, 16, 16)
             recon_imgs = y.view(-1, 3, 16, 16)
-        self._val_kl_diags.append(kl_diag.detach().cpu()) 
+        self._val_kl_diags.append(kl_diag.detach().cpu())
         self._val_latents.append(z.detach().cpu())
         self._val_recons.append(recon_imgs.detach().cpu())
         self._val_inputs.append(real_imgs.detach().cpu())
@@ -217,36 +217,36 @@ class VAETrainer(pl.LightningModule):
                 'inputs': wdb.Image(fig_x, caption="inputs"),
             })
             # log_latent_mean_vs_var(
-            #     logger=self.logger.experiment, 
-            #     z=z, 
+            #     logger=self.logger.experiment,
+            #     z=z,
             #     save_dir=None,
-            #     step_name=f"val_epoch_{self.current_epoch}", 
+            #     step_name=f"val_epoch_{self.current_epoch}",
             #     caption="Latent mean vs var",
             #     savelocal=False
             # )
 
         return loss
-    
+
     def on_validation_epoch_end(self):
 
         if self.current_epoch != self.trainer.max_epochs - 1:
-            return  
+            return
 
 
         # if self.current_epoch % 50 ==0 or self.current_epoch == self.trainer.max_epochs - 1:
         if len(self._val_kl_diags) > 0:
             kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()# shape: [latent_dim]
             print(kl_diag.shape)
-            
+
             dead_mask = self.find_dead_neurons(kl=kl_diag)
             dnr = dead_mask.mean().item()
             self._val_dnr = dnr
-    
+
             self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
             self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
         else:
             print("[Warning] No KL diagnostics found for this epoch.")
-        
+
         self.log("dead_neuron_rate",dnr, prog_bar=True)
         self.logger.experiment.log({"dnr": dnr})
 
@@ -263,10 +263,10 @@ class VAETrainer(pl.LightningModule):
         print(f"[📊] ODI: {self.oi:.4f}")
         print(f"[💀] DNR:     {self._val_dnr:.4f}")
 
-            
+
     def configure_optimizers(self):
         return self.opt(self.parameters(), **self.opt_params)
-    
+
 
     def find_dead_neurons(self, kl: np.ndarray = None):
         eps = np.finfo(kl.dtype).eps
@@ -288,10 +288,10 @@ class VAETrainer(pl.LightningModule):
             if matched:
                 return kl < thres
 
-            
+
         if model_type == 'categorical' and hasattr(self.model, 'find_dead_neurons'):
             return self.model.find_dead_neurons(2)
-        
+
         if enc_type == 'linear' and hasattr(self.model, 'find_dead_neurons'):
             dead = self.model.find_dead_neurons(8)
             order = np.argsort(kl)
@@ -299,7 +299,7 @@ class VAETrainer(pl.LightningModule):
             dead = np.zeros(len(dead))
             dead[order[:idx]] = 1
             return dead.astype(bool)
-        
+
         log_kl = np.log(kl)
         bins = np.linspace(start=np.nanmin(log_kl), stop=np.nanmax(log_kl), num=len(log_kl) * 10)
         hist, _ = np.histogram(log_kl, bins=bins)
@@ -310,7 +310,7 @@ class VAETrainer(pl.LightningModule):
 
 
     def test_step(self, batch, batch_idx):
-        x = batch[0].view(batch[0].size(0), -1) 
+        x = batch[0].view(batch[0].size(0), -1)
         gt_label = batch[1]
         if self.model_name == "poisson":
             dist, du, z, y = self(batch)
@@ -325,7 +325,7 @@ class VAETrainer(pl.LightningModule):
             dist, (loc, log_scale), z, y = self(batch)
         else:
             raise ValueError(f"Unsupported model: {self.model_name}")
-            
+
         if self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 x = x.view(-1, 1, 28, 28)
@@ -336,10 +336,10 @@ class VAETrainer(pl.LightningModule):
 
         self._test_latents.append(z.detach().cpu())
         self._test_labels.append(gt_label.detach().cpu())
-        
-       
+
+
         if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
-            real_imgs = batch[0].repeat(1, 3, 1, 1) 
+            real_imgs = batch[0].repeat(1, 3, 1, 1)
             recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
         elif self.cfg['dataset']['name'] == 'CIFAR16':
             real_imgs = batch[0].view(-1, 3, 16, 16)
@@ -348,7 +348,7 @@ class VAETrainer(pl.LightningModule):
         self._test_recons.append(recon_imgs.detach().cpu())
         self._test_inputs.append(real_imgs.detach().cpu())
 
-  
+
         if batch_idx % 10 == 0:
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
@@ -363,22 +363,22 @@ class VAETrainer(pl.LightningModule):
                 'inputs': wdb.Image(fig_x, caption="inputs"),
             })
             # log_latent_mean_vs_var(
-            #     logger=self.logger.experiment, 
-            #     z=z, 
+            #     logger=self.logger.experiment,
+            #     z=z,
             #     save_dir=None,
-            #     step_name=f"val_epoch_{self.current_epoch}", 
+            #     step_name=f"val_epoch_{self.current_epoch}",
             #     caption="Latent mean vs var",
             #     savelocal=False
             # )
 
         return recon_loss.detach()
-    
+
 
     def on_test_end(self, end=False):
-        
+
         fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
-        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
-        
+        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to(device)
+
         # ========== Save dirs ==========
         if end:
             save_dirs = {
@@ -409,7 +409,7 @@ class VAETrainer(pl.LightningModule):
         else:
             print("[⚠] No test z collected to save.")
             return
-        
+
         max_samples = 5000
         normalize_needed = self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']
 
@@ -420,7 +420,7 @@ class VAETrainer(pl.LightningModule):
             recon_sample = recon_sample.to(self.device)
         if input_sample is not None:
             input_sample = input_sample.to(self.device)
-  
+
         # ========== MSE ==========
         if input_sample is not None and recon_sample is not None:
             mse = F.mse_loss(recon_sample, input_sample).item()
@@ -478,10 +478,10 @@ class VAETrainer(pl.LightningModule):
 
 
     # def on_fit_end(self, end=False):
-        
+
     #     fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
     #     self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
-        
+
     #     # ========== Save dirs ==========
     #     if end:
     #         save_dirs = {
@@ -538,7 +538,7 @@ class VAETrainer(pl.LightningModule):
     #     # else:
     #     #     recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
     #     #     input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
-        
+
     #     # max_samples = 5000
 
     #     # if recon_all.size(0) > max_samples:
@@ -547,9 +547,9 @@ class VAETrainer(pl.LightningModule):
     #     # else:
     #     #     recon_sample = recon_all
     #     #     input_sample = input_all
-        
-        
-        
+
+
+
     #     max_samples = 5000
     #     normalize_needed = self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']
 
@@ -562,7 +562,7 @@ class VAETrainer(pl.LightningModule):
     #         input_sample = input_sample.to(self.device)
     #     #recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
     #     #input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
-        
+
     #     # ========== MSE ==========
     #     if input_sample is not None and recon_sample is not None:
     #         mse = F.mse_loss(recon_sample, input_sample).item()
@@ -621,7 +621,7 @@ class VAETrainer(pl.LightningModule):
 
 
 
-        
+
 def _select_and_stack(tensor_list, max_samples, normalize=False):
     selected = []
     total = 0
@@ -643,7 +643,3 @@ def _select_and_stack(tensor_list, max_samples, normalize=False):
     else:
         out = out.clamp(0, 1)
     return out
-
-
-
-
