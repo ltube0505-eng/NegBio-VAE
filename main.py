@@ -78,14 +78,14 @@ def main(argv):
     #     if "logits" in name:
     #         print(f"  ✅ {name}: requires_grad={param.requires_grad}, shape={param.shape}")
 
-    """if FLAGS.local:
+    if FLAGS.local:
         accelerator = "cpu"
         devices = 1
         strategy = None
-    else:"""
-    accelerator = "gpu"
-    devices = [0]
-    strategy = "ddp"
+    else:
+        accelerator = "gpu"
+        devices = [0]
+        strategy = "ddp"
 
             
     trainer_args = {
@@ -121,6 +121,7 @@ def main(argv):
 
 
     trainer.fit(model, datamodule=dm)
+    trainer.test(model, datamodule=dm)
     
 
 

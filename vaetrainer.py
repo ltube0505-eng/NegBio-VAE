@@ -64,6 +64,13 @@ class VAETrainer(pl.LightningModule):
         self._val_dnr = None
         self._final_val_fid = None
 
+        self._test_latents = []
+        self._test_labels = []
+        self._test_recons = []
+        self._test_inputs = []
+
+
+
 
     def setup(self, stage = None):
         if hasattr(self.trainer.datamodule, 'train_steps_per_epoch'):
@@ -222,45 +229,39 @@ class VAETrainer(pl.LightningModule):
     
     def on_validation_epoch_end(self):
 
+        if self.current_epoch != self.trainer.max_epochs - 1:
+            return  
+
+
         # if self.current_epoch % 50 ==0 or self.current_epoch == self.trainer.max_epochs - 1:
         if len(self._val_kl_diags) > 0:
             kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()# shape: [latent_dim]
+            print(kl_diag.shape)
             
             dead_mask = self.find_dead_neurons(kl=kl_diag)
             dnr = dead_mask.mean().item()
             self._val_dnr = dnr
-            # print(f"[💀] Dead Neuron Rate (DNR): {dnr:.4f}")
-
+    
             self.log("num_dead_units", dead_mask.sum().item(), prog_bar=True)
             self.logger.experiment.log({"num_dead_units": dead_mask.sum().item()})
-            # log_dead_neurons_diagnostics(
-            #     kl_diag=kl_diag,
-            #     dead_mask=dead_mask,
-            #     logger=self.logger,
-            #     step_name=f"val_epoch_{self.current_epoch}"
-            # )
         else:
             print("[Warning] No KL diagnostics found for this epoch.")
         
-            #self._val_latents = []
-            # self._val_kl_diags = []   # empty the kl_diags
-            
-            # fid_score = self.fid_metric.compute().item()
-            # self.log("val_fid", fid_score, prog_bar=True)
         self.log("dead_neuron_rate",dnr, prog_bar=True)
-        # self.logger.experiment.log({"val_fid": fid_score})
         self.logger.experiment.log({"dnr": dnr})
-            # self._final_val_fid = fid_score  
-            # self.fid_metric.reset()
 
         if len(self._val_oi_list) > 0:
             avg_oi = sum(self._val_oi_list) / len(self._val_oi_list)
-            # print(f"[📊] Overdispersion Index (OI): {avg_oi:.4f}")
             self.log("overdispersion_index_epoch", avg_oi)
             self.logger.experiment.log({"epoch_oi": avg_oi})
             self.oi = avg_oi
         else:
             print("[⚠] No OI values collected.")
+
+        # print(len(self._val_kl_diags))
+        # print(len(self._val_oi_list))
+        print(f"[📊] ODI: {self.oi:.4f}")
+        print(f"[💀] DNR:     {self._val_dnr:.4f}")
 
             
     def configure_optimizers(self):
@@ -308,8 +309,72 @@ class VAETrainer(pl.LightningModule):
         return dead.astype(bool)
 
 
+    def test_step(self, batch, batch_idx):
+        x = batch[0].view(batch[0].size(0), -1) 
+        gt_label = batch[1]
+        if self.model_name == "poisson":
+            dist, du, z, y = self(batch)
+        elif self.model_name == "negbio":
+            dist, logit_p, z, y = self(batch)
+        elif self.model_name == "categorical":
+            dist, logit_p, z, y = self(batch)
+            kl_diag = self.model.dist_class.comput_kl(logit_p)
+        elif self.model_name == "laplace":
+            dist, (loc, log_scale), z, y = self(batch)
+        elif self.model_name == "gaussian":
+            dist, (loc, log_scale), z, y = self(batch)
+        else:
+            raise ValueError(f"Unsupported model: {self.model_name}")
+            
+        if self.cfg['decoder']['type']=="conv":
+            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
+                x = x.view(-1, 1, 28, 28)
+            elif self.cfg['dataset']['name'] == 'CIFAR16':
+                x = x.view(-1, 3, 16, 16)
 
-    def on_fit_end(self, end=False):
+        recon_loss = self.model.mse_loss(x, y)
+
+        self._test_latents.append(z.detach().cpu())
+        self._test_labels.append(gt_label.detach().cpu())
+        
+       
+        if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
+            real_imgs = batch[0].repeat(1, 3, 1, 1) 
+            recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
+        elif self.cfg['dataset']['name'] == 'CIFAR16':
+            real_imgs = batch[0].view(-1, 3, 16, 16)
+            recon_imgs = y.view(-1, 3, 16, 16)
+
+        self._test_recons.append(recon_imgs.detach().cpu())
+        self._test_inputs.append(real_imgs.detach().cpu())
+
+  
+        if batch_idx % 10 == 0:
+            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
+                fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
+            elif self.cfg['dataset']['name'] == 'CIFAR16':
+                fig_y = torchvision.utils.make_grid(y.reshape(-1, 3, 16, 16), nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 3, 16, 16), nrow=10)
+            else:
+                raise ValueError(f"Unseen dataset name: {self.cfg['dataset']['name']}")
+            self.logger.experiment.log({
+                'recons': wdb.Image(fig_y, caption="recons"),
+                'inputs': wdb.Image(fig_x, caption="inputs"),
+            })
+            # log_latent_mean_vs_var(
+            #     logger=self.logger.experiment, 
+            #     z=z, 
+            #     save_dir=None,
+            #     step_name=f"val_epoch_{self.current_epoch}", 
+            #     caption="Latent mean vs var",
+            #     savelocal=False
+            # )
+
+        return recon_loss.detach()
+    
+
+    def on_test_end(self, end=False):
         
         fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
         self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
@@ -333,68 +398,29 @@ class VAETrainer(pl.LightningModule):
         for path in save_dirs.values():
             os.makedirs(path, exist_ok=True)
         # ========== Save latent z ==========
-        if len(self._val_latents) > 0:
-            all_z = torch.cat(self._val_latents, dim=0).numpy()
-            np.save(os.path.join(save_dirs["latents"], "val_z_all.npy"), all_z)
-            print(f"[✔] Saved all validation z")
+        if len(self._test_latents) > 0:
+            all_z = torch.cat(self._test_latents, dim=0).numpy()
+            print(all_z.shape)
+            all_gt_label = torch.cat(self._test_labels, dim=0).numpy()
+            np.save(os.path.join(save_dirs["latents"], "test_z_all.npy"), all_z)
+            np.save(os.path.join(save_dirs['latents'], "test_y_all.npy"), all_gt_label)
+            print(f"[✔] Saved all test z")
+            print(f"[✔] Saved all test label")
         else:
-            print("[⚠] No validation z collected to save.")
+            print("[⚠] No test z collected to save.")
             return
-        # ========== Overdispersion Index ==========
-        #overdispersion_index = get_overdispersion_index(all_z)
-        # log_latent_mean_vs_var(
-        #     logger=self.logger.experiment,
-        #     z=all_z,
-        #     save_dir=save_dirs['meanvar'],
-        #     step_name="final",
-        #     caption="Latent Mean vs Variance"
-        # )
-        # ========== Fano and Spike Histogram ==========
-        # plot_fano(all_z, save_dirs["fano"], self.logger)
-        # spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
-
-        # ========== KL diagnostic & Dead Neuron ==========
-        #kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
-        #dead_mask = self.find_dead_neurons(kl=kl_diag)
-        #dnr = dead_mask.mean().item()
-        # log_dead_neurons_diagnostics(
-        #     kl_diag=kl_diag,
-        #     dead_mask=dead_mask,
-        #     logger=self.logger,
-        #     step_name=f"val_epoch_{self.current_epoch}"
-        # )
-        # ========== Recon input collection ==========
-        # if self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
-        #     recon_all = ((torch.cat(self._val_recons, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
-        #     input_all = ((torch.cat(self._val_inputs, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
-        # else:
-        #     recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
-        #     input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
-        
-        # max_samples = 5000
-
-        # if recon_all.size(0) > max_samples:
-        #     recon_sample = recon_all[:max_samples].cuda()
-        #     input_sample = input_all[:max_samples].cuda()
-        # else:
-        #     recon_sample = recon_all
-        #     input_sample = input_all
-        
-        
         
         max_samples = 5000
         normalize_needed = self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']
 
-        recon_sample = _select_and_stack(self._val_recons, max_samples, normalize=normalize_needed)
-        input_sample = _select_and_stack(self._val_inputs, max_samples, normalize=normalize_needed)
+        recon_sample = _select_and_stack(self._test_recons, max_samples, normalize=normalize_needed)
+        input_sample = _select_and_stack(self._test_inputs, max_samples, normalize=normalize_needed)
 
         if recon_sample is not None:
             recon_sample = recon_sample.to(self.device)
         if input_sample is not None:
             input_sample = input_sample.to(self.device)
-        #recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
-        #input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
-        
+  
         # ========== MSE ==========
         if input_sample is not None and recon_sample is not None:
             mse = F.mse_loss(recon_sample, input_sample).item()
@@ -448,6 +474,148 @@ class VAETrainer(pl.LightningModule):
             log_dict["final_inception_score_std"] = is_std
 
         self.logger.experiment.log(log_dict)
+
+
+
+    # def on_fit_end(self, end=False):
+        
+    #     fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
+    #     self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
+        
+    #     # ========== Save dirs ==========
+    #     if end:
+    #         save_dirs = {
+    #             "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
+    #             "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
+    #             "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
+    #             "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
+    #         }
+    #     else:
+    #         save_dirs = {
+    #             "latents": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "latents"),
+    #             "fano": os.path.join(".save/", self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'],"analysis", "fano"),
+    #             "meanvar": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "analysis", "meanvar"),
+    #             "spike_hist": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "analysis", "spike_hist"),
+    #         }
+
+    #     for path in save_dirs.values():
+    #         os.makedirs(path, exist_ok=True)
+    #     # ========== Save latent z ==========
+    #     if len(self._val_latents) > 0:
+    #         all_z = torch.cat(self._val_latents, dim=0).numpy()
+    #         np.save(os.path.join(save_dirs["latents"], "val_z_all.npy"), all_z)
+    #         print(f"[✔] Saved all validation z")
+    #     else:
+    #         print("[⚠] No validation z collected to save.")
+    #         return
+    #     # ========== Overdispersion Index ==========
+    #     #overdispersion_index = get_overdispersion_index(all_z)
+    #     # log_latent_mean_vs_var(
+    #     #     logger=self.logger.experiment,
+    #     #     z=all_z,
+    #     #     save_dir=save_dirs['meanvar'],
+    #     #     step_name="final",
+    #     #     caption="Latent Mean vs Variance"
+    #     # )
+    #     # ========== Fano and Spike Histogram ==========
+    #     # plot_fano(all_z, save_dirs["fano"], self.logger)
+    #     # spike_count_hist(all_z, save_dirs['spike_hist'], self.logger, top_k=8)
+
+    #     # ========== KL diagnostic & Dead Neuron ==========
+    #     #kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()
+    #     #dead_mask = self.find_dead_neurons(kl=kl_diag)
+    #     #dnr = dead_mask.mean().item()
+    #     # log_dead_neurons_diagnostics(
+    #     #     kl_diag=kl_diag,
+    #     #     dead_mask=dead_mask,
+    #     #     logger=self.logger,
+    #     #     step_name=f"val_epoch_{self.current_epoch}"
+    #     # )
+    #     # ========== Recon input collection ==========
+    #     # if self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+    #     #     recon_all = ((torch.cat(self._val_recons, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+    #     #     input_all = ((torch.cat(self._val_inputs, dim=0) + 1) / 2).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
+    #     # else:
+    #     #     recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+    #     #     input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
+        
+    #     # max_samples = 5000
+
+    #     # if recon_all.size(0) > max_samples:
+    #     #     recon_sample = recon_all[:max_samples].cuda()
+    #     #     input_sample = input_all[:max_samples].cuda()
+    #     # else:
+    #     #     recon_sample = recon_all
+    #     #     input_sample = input_all
+        
+        
+        
+    #     max_samples = 5000
+    #     normalize_needed = self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']
+
+    #     recon_sample = _select_and_stack(self._val_recons, max_samples, normalize=normalize_needed)
+    #     input_sample = _select_and_stack(self._val_inputs, max_samples, normalize=normalize_needed)
+
+    #     if recon_sample is not None:
+    #         recon_sample = recon_sample.to(self.device)
+    #     if input_sample is not None:
+    #         input_sample = input_sample.to(self.device)
+    #     #recon_all = torch.cat(self._val_recons, dim=0).clamp(0, 1) if hasattr(self, "_val_recons") and self._val_recons else None
+    #     #input_all = torch.cat(self._val_inputs, dim=0).clamp(0, 1) if hasattr(self, "_val_inputs") and self._val_inputs else None
+        
+    #     # ========== MSE ==========
+    #     if input_sample is not None and recon_sample is not None:
+    #         mse = F.mse_loss(recon_sample, input_sample).item()
+    #     else:
+    #         mse = None
+    #         print("[⚠] MSE skipped due to missing recon/input.")
+
+    #     # ========== Inception Score ==========
+    #     if recon_sample is not None:
+    #         is_mean, is_std = compute_inception_score(recon_sample, device=self.device)
+    #     else:
+    #         is_mean, is_std = None, None
+    #         print("[⚠] Inception Score skipped due to missing recon.")
+
+    #     # ========== FID ==========
+    #     #try:
+    #     with torch.no_grad():
+    #         for i in range(0, recon_sample.size(0), 64):
+    #             self.fid_metric.update(input_sample[i:i+64], real=True)
+    #             self.fid_metric.update(recon_sample[i:i+64], real=False)
+
+    #     fid_score = self.fid_metric.compute().item()
+    #     """self.fid_metric.update(input_all.cuda(), real=True)
+    #     self.fid_metric.update(recon_all.cuda(), real=False)
+    #     fid_score = self.fid_metric.compute().item()"""
+    #     """except Exception as e:
+    #         fid_score = None
+    #         print(f"[⚠] Failed to compute FID: {e}")"""
+
+    #     # ========== PRINT Final Results ==========
+    #     print("\n===== 🎯 Final Performance Metrics =====")
+    #     if mse is not None:       print(f"[📐] MSE:             {mse:.6f}")
+    #     if fid_score is not None: print(f"[🧬] FID:             {fid_score:.4f}")
+    #     if is_mean is not None:   print(f"[🌈] IS: {is_mean:.4f} ± {is_std:.4f}")
+
+    #     # print("\n===== 🧠 Latent Diagnostics =====")
+    #     print(f"[📊] ODI: {self.oi:.4f}")
+    #     print(f"[💀] DNR:     {self._val_dnr:.4f}")
+
+    #     # ========== WandB Logging ==========
+    #     log_dict = {
+    #         #"final_overdispersion_index": overdispersion_index,
+    #         "final_dnr": self._val_dnr
+    #     }
+    #     if mse is not None:
+    #         log_dict["final_mse"] = mse
+    #     if fid_score is not None:
+    #         log_dict["final_fid"] = fid_score
+    #     if is_mean is not None:
+    #         log_dict["final_inception_score"] = is_mean
+    #         log_dict["final_inception_score_std"] = is_std
+
+    #     self.logger.experiment.log(log_dict)
 
 
 
