@@ -137,6 +137,8 @@ class VAETrainer(pl.LightningModule):
                 x = batch[0].view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = batch[0].view(-1, 3, 16, 16)
+            elif self.cfg['dataset']['name'] == 'SVHN':
+                x = batch[0].view(-1, 3, 32, 32)
 
         recon_loss = self.model.mse_loss(x, y)
 
@@ -179,6 +181,9 @@ class VAETrainer(pl.LightningModule):
                 x = x.view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = x.view(-1, 3, 16, 16)
+            elif self.cfg['dataset']['name'] == 'SVHN':
+                x = x.view(-1, 3, 32, 32)
+
         recon_loss = self.model.mse_loss(x, y)
         val_elbo = recon_loss + kl
         loss = self.beta*kl + recon_loss
@@ -196,6 +201,9 @@ class VAETrainer(pl.LightningModule):
         elif self.cfg['dataset']['name'] == 'CIFAR16':
             real_imgs = batch[0].view(-1, 3, 16, 16)
             recon_imgs = y.view(-1, 3, 16, 16)
+        elif self.cfg['dataset']['name'] == 'SVHN':
+            real_imgs = batch[0].view(-1, 3, 32, 32)
+            recon_imgs = y.view(-1, 3, 32, 32)
         self._val_kl_diags.append(kl_diag.detach().cpu())
         self._val_latents.append(z.detach().cpu())
         self._val_recons.append(recon_imgs.detach().cpu())
@@ -210,6 +218,9 @@ class VAETrainer(pl.LightningModule):
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 3, 16, 16), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 3, 16, 16), nrow=10)
+            elif self.cfg['dataset']['name'] == 'SVHN':
+                fig_y = torchvision.utils.make_grid(y.reshape(-1, 3, 32, 32), nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 3, 32, 32), nrow=10)
             else:
                 raise ValueError(f"Unseen dataset name: {self.cfg['dataset']['name']}")
             self.logger.experiment.log({
@@ -336,6 +347,8 @@ class VAETrainer(pl.LightningModule):
                 x = x.view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 x = x.view(-1, 3, 16, 16)
+            elif self.cfg['dataset']['name'] == 'SVHN':
+                x = x.view(-1, 3, 32, 32)
 
         recon_loss = self.model.mse_loss(x, y)
 
@@ -349,6 +362,9 @@ class VAETrainer(pl.LightningModule):
         elif self.cfg['dataset']['name'] == 'CIFAR16':
             real_imgs = batch[0].view(-1, 3, 16, 16)
             recon_imgs = y.view(-1, 3, 16, 16)
+        elif self.cfg['dataset']['name'] == 'SVHN':
+            real_imgs = batch[0].view(-1, 3, 32, 32)
+            recon_imgs = y.view(-1, 3, 32, 32)
 
         self._test_recons.append(recon_imgs.detach().cpu())
         self._test_inputs.append(real_imgs.detach().cpu())
@@ -361,6 +377,9 @@ class VAETrainer(pl.LightningModule):
             elif self.cfg['dataset']['name'] == 'CIFAR16':
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 3, 16, 16), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 3, 16, 16), nrow=10)
+            elif self.cfg['dataset']['name'] == 'SVHN':
+                fig_y = torchvision.utils.make_grid(y.reshape(-1, 3, 32, 32), nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 3, 32, 32), nrow=10)
             else:
                 raise ValueError(f"Unseen dataset name: {self.cfg['dataset']['name']}")
             self.logger.experiment.log({
