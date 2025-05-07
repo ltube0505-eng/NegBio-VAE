@@ -26,7 +26,7 @@ flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
 flags.DEFINE_integer("max_epochs", 200, "maximum epochs reached")
-
+flags.DEFINE_integer("latent_dim", 10, "latent_dim")
 
 def main(argv):
   
@@ -56,6 +56,9 @@ def main(argv):
     cfg['dataset']['name'] = FLAGS.dataset
     cfg['model']['name'] = FLAGS.model_type
     cfg['model']['kl'] = FLAGS.kl
+    cfg['model']['latent_dim'] = FLAGS.latent_dim
+    cfg['encoder']['latent_dim'] = FLAGS.latent_dim
+    cfg['decoder']['latent_dim'] = FLAGS.latent_dim
     
 
     
@@ -67,7 +70,7 @@ def main(argv):
     print(flatten_flag)
 
     if FLAGS.local:
-        dm = MNISTDataModule(data_dir='./Datasets', batch_size=FLAGS.bsize_local)
+        dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag, use_subset=True)
     else:
         dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag)
     

@@ -97,9 +97,12 @@ class GenericVAE(nn.Module):
 
         elif self.dist_type == "negbio":
             logit_p = self.encode(x).clamp(-5, 5)
+            r = torch.exp(self.log_r_prior)
+            p = torch.sigmoid(logit_p)
+            zrep = r * ((1-p)/(p+1e-10))
             z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)             
             y = self.decode(z)
-            return self.dist_class, logit_p, z, y
+            return self.dist_class, zrep, z, y
         elif self.dist_type == "categorical":
             logit_p = self.encode(x) 
             self.dist_class = Categorical(logits=logit_p)

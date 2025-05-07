@@ -314,15 +314,20 @@ class VAETrainer(pl.LightningModule):
         gt_label = batch[1]
         if self.model_name == "poisson":
             dist, du, z, y = self(batch)
+            z_repr = du
         elif self.model_name == "negbio":
-            dist, logit_p, z, y = self(batch)
+            dist, du, z, y = self(batch)
+            z_repr = du
+            #z_repr = negbio_latent_repr(self.model.log_r_prior, logit_p)
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
-            kl_diag = self.model.dist_class.comput_kl(logit_p)
+            z_repr = logit_p
         elif self.model_name == "laplace":
             dist, (loc, log_scale), z, y = self(batch)
+            z_repr = loc
         elif self.model_name == "gaussian":
             dist, (loc, log_scale), z, y = self(batch)
+            z_repr = loc
         else:
             raise ValueError(f"Unsupported model: {self.model_name}")
 
@@ -334,7 +339,7 @@ class VAETrainer(pl.LightningModule):
 
         recon_loss = self.model.mse_loss(x, y)
 
-        self._test_latents.append(z.detach().cpu())
+        self._test_latents.append(z_repr.detach().cpu())
         self._test_labels.append(gt_label.detach().cpu())
 
 
@@ -643,3 +648,11 @@ def _select_and_stack(tensor_list, max_samples, normalize=False):
     else:
         out = out.clamp(0, 1)
     return out
+
+
+def negbio_latent_repr(log_r, logit_p):
+    # r: shape (d,)
+    r = torch.exp(log_r)
+    p = torch.sigmoid(logit_p)
+    mu = r * (1 - p) / (p + 1e-8)
+    return torch.log(mu + 1e-8)

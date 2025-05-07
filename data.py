@@ -1,12 +1,12 @@
-from torch.utils.data import DataLoader, Subset
-from torchvision import datasets, transforms
-from pytorch_lightning import LightningDataModule
-import torch
+import math
 import os
-from torch.utils.data import DataLoader, random_split, TensorDataset
+
+import torch
+from PIL import ImageOps
+from pytorch_lightning import LightningDataModule
+from torch.utils.data import DataLoader, Subset, TensorDataset, random_split
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
-from PIL import ImageOps
 
 
 class MNISTDataModule(LightningDataModule):
@@ -67,16 +67,16 @@ def get_transform(dataset_name, device, grey=False, augment=False, flatten=True)
     if grey:
         tf.append(transforms.Grayscale())
 
+    if augment and dataset_name in ['CIFAR10', 'CIFAR16']:
+        tf.insert(0, transforms.RandomHorizontalFlip(p=0.5))
+
     tf.append(transforms.ToTensor())
 
     if dataset_name in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
         if grey:
             tf.append(transforms.Normalize(mean=[0.5], std=[0.5]))
         else:
-            tf.append(transforms.Normalize(mean=[0.5]*3, std=[0.5]*3))
-
-    if augment and dataset_name in ['CIFAR10', 'CIFAR16']:
-        tf.insert(0, transforms.RandomHorizontalFlip(p=1.0))
+            tf.append(transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)) #[-1,1] 
 
     if flatten:
         tf.append(transforms.Lambda(lambda x: x.view(-1)))
@@ -95,7 +95,11 @@ class DataModule(LightningDataModule):
                  device='cpu', 
                  grey = False, 
                  augment = False,
-                 flatten = True):
+                 flatten = True,
+                 use_subset=False,
+                 train_subset_size=5000,
+                 val_subset_size=500,
+                 seed = 1975):
         super().__init__()
         self.dataset_name = dataset_name
         self.data_dir = data_dir
@@ -106,20 +110,27 @@ class DataModule(LightningDataModule):
         self.augment = augment
         self.num_workers = num_workers
         self.flatten = flatten
+        self.use_subset = use_subset
+        self.train_subset_size = train_subset_size
+        self.val_subset_size = val_subset_size
+        self.seed = seed
 
         self.transform = get_transform(dataset_name, device, grey, augment, flatten)
 
     def prepare_data(self):
         name = self.dataset_name.lower()
         if name == "svhn":
+            print("Prepare SVHN...")
             datasets.SVHN(root=self.data_dir, split='train', download=True)
             datasets.SVHN(root=self.data_dir, split='test', download=True)
         elif name == "omniglot":
+            print("Prepare Omniglot...")
             datasets.Omniglot(root=self.data_dir, background=True, download=True)
             datasets.Omniglot(root=self.data_dir, background=False, download=True)
         else:
             if name == "cifar16":
                 self.dataset_name = "CIFAR10"
+                print("Prepare CIFAR16...")
             dataset_cls = getattr(datasets, self.dataset_name)
             dataset_cls(root=self.data_dir, train=True, download=True)
             dataset_cls(root=self.data_dir, train=False, download=True)
@@ -141,13 +152,26 @@ class DataModule(LightningDataModule):
                 dataset_cls = getattr(datasets, name)
             full = dataset_cls(root=self.data_dir, train=True, transform=self.transform)
             self.test_set = dataset_cls(root=self.data_dir, train=False, transform=self.transform)
+        print("Dataset {} is set!".format(name))
 
-        val_len = int(len(full) * self.val_split)
-        train_len = len(full) - val_len
-        import math
-        self.train_steps_per_epoch = math.ceil(train_len/ self.batch_size)
 
-        self.train_set, self.val_set = random_split(full, [train_len, val_len])
+        if self.use_subset:
+            # 固定随机子集
+            g = torch.Generator()
+            g.manual_seed(self.seed)
+            train_idx = torch.randperm(len(full), generator=g)[:self.train_subset_size]
+            val_idx = torch.randperm(len(full), generator=g)[self.train_subset_size:self.train_subset_size+self.val_subset_size]
+            self.train_set = Subset(full, train_idx)
+            self.val_set = Subset(full, val_idx)
+            self.train_steps_per_epoch = math.ceil(len(self.train_set) / self.batch_size)
+
+        else:
+            val_len = int(len(full) * self.val_split)
+            train_len = len(full) - val_len
+            
+            self.train_steps_per_epoch = math.ceil(train_len/ self.batch_size)
+
+            self.train_set, self.val_set = random_split(full, [train_len, val_len])
 
     def train_dataloader(self):
         return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)
