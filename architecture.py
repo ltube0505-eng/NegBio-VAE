@@ -54,7 +54,7 @@ class ConvEncoder(nn.Module):
         
         if dataset in ['vH16', 'CIFAR16', 'BALLS16', 'BALLS64']:
             padding = 1
-        elif dataset.endswith("MNIST") or dataset == "Omniglot":
+        elif dataset.endswith("MNIST") or dataset in ["Omniglot", 'SVHN']:
             padding = 0
         else:
             raise ValueError(f"Unknown dataset: {dataset}")
@@ -71,6 +71,8 @@ class ConvEncoder(nn.Module):
             dummy = torch.zeros(1, self.in_channels, 16, 16)
         elif dataset.endswith("MNIST") or dataset == "Omniglot":
             dummy = torch.zeros(1, self.in_channels, 28, 28)
+        elif dataset == 'SVHN':
+            dummy = torch.zeros(1, self.in_channels, 32, 32)
         else:
             raise ValueError(f"Unknown dataset: {dataset}")
         
