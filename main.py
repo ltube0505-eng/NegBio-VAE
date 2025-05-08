@@ -10,6 +10,7 @@ from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, wandb
 
 import wandb as wdb
 from callback import GumbelMonitorCallback
+from clf_analysis import train_clf_analysis
 from data import DataModule, MNISTDataModule
 from vaetrainer import VAETrainer
 
@@ -27,6 +28,7 @@ flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
 flags.DEFINE_integer("max_epochs", 200, "maximum epochs reached")
 flags.DEFINE_integer("latent_dim", 10, "latent_dim")
+flags.DEFINE_string("clf_type", "logreg", "Choice of [knn, logreg, svm]")
 
 def main(argv):
   
@@ -76,10 +78,6 @@ def main(argv):
     
     
     model = VAETrainer(cfg)
-    # print("🔍 Trainable parameters in the model:")
-    # for name, param in model.named_parameters():
-    #     if "logits" in name:
-    #         print(f"  ✅ {name}: requires_grad={param.requires_grad}, shape={param.shape}")
 
     if FLAGS.local:
         accelerator = "cpu"
@@ -125,7 +123,6 @@ def main(argv):
 
     trainer.fit(model, datamodule=dm)
     trainer.test(model, datamodule=dm)
-    
 
 
 

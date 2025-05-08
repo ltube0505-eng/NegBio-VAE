@@ -155,6 +155,7 @@ class DataModule(LightningDataModule):
         print("Dataset {} is set!".format(name))
 
 
+
         if self.use_subset:
             # 固定随机子集
             g = torch.Generator()
@@ -172,6 +173,10 @@ class DataModule(LightningDataModule):
             self.train_steps_per_epoch = math.ceil(train_len/ self.batch_size)
 
             self.train_set, self.val_set = random_split(full, [train_len, val_len])
+
+        print("Train set size:", len(self.train_set))
+        print("Val set size:", len(self.val_set))
+        print("Test set size:", len(self.test_set))
 
     def train_dataloader(self):
         return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)

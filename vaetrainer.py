@@ -11,6 +11,7 @@ import torchvision
 from torch.distributions import Categorical, RelaxedOneHotCategorical
 from torchmetrics.image.fid import FrechetInceptionDistance
 
+from clf_analysis import train_clf_analysis
 from distribution import Laplace
 
 warnings.filterwarnings("ignore")
@@ -63,6 +64,7 @@ class VAETrainer(pl.LightningModule):
         self._val_oi_list = []
         self._val_dnr = None
         self._final_val_fid = None
+        self._val_z = []
 
         self._test_latents = []
         self._test_labels = []
@@ -175,6 +177,10 @@ class VAETrainer(pl.LightningModule):
             kl_diag = dist.kl()
 
         kl = kl_diag.mean()
+        if self.current_epoch == self.trainer.max_epochs - 1:
+            if not hasattr(self, '_val_z'):
+                self._val_z = []
+            self._val_z.append(z.detach().cpu())
 
         if self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
@@ -426,13 +432,27 @@ class VAETrainer(pl.LightningModule):
             all_z = torch.cat(self._test_latents, dim=0).numpy()
             print(all_z.shape)
             all_gt_label = torch.cat(self._test_labels, dim=0).numpy()
-            np.save(os.path.join(save_dirs["latents"], "test_z_all.npy"), all_z)
-            np.save(os.path.join(save_dirs['latents'], "test_y_all.npy"), all_gt_label)
-            print(f"[✔] Saved all test z")
+            np.save(os.path.join(save_dirs["latents"], 
+                                 "test_z_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
+                                 all_z)
+            np.save(os.path.join(save_dirs['latents'], 
+                                 "test_y_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
+                                 all_gt_label)
+            print(f"[✔] Saved all test rep")
             print(f"[✔] Saved all test label")
         else:
             print("[⚠] No test z collected to save.")
             return
+        all_val_spikes = torch.cat(self._val_z, dim=0).numpy()
+        print(all_val_spikes.shape)
+        np.save(os.path.join(save_dirs["latents"], 
+                                 "val_spike_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
+                                 all_val_spikes)
+        print(f"[✔] Saved all val spikes")
+
+        train_clf_analysis(all_z,all_gt_label)
+
+
 
         max_samples = 5000
         normalize_needed = self.cfg['dataset']['name'].lower() in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']
