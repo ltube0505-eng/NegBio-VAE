@@ -1,26 +1,21 @@
 import os
 import warnings
 
-import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
 import torchvision
-from torch.distributions import Categorical, RelaxedOneHotCategorical
 from torchmetrics.image.fid import FrechetInceptionDistance
 
 from clf_analysis import train_clf_analysis
-from distribution import Laplace
 
 warnings.filterwarnings("ignore")
 import wandb as wdb
 from model import GenericVAE
 from utils import (build_decoder, build_encoder, compute_inception_score,
-                   find_last_contiguous_zeros, get_overdispersion_index,
-                   log_dead_neurons_diagnostics, log_latent_mean_vs_var,
-                   plot_fano, spike_count_hist)
+                   find_last_contiguous_zeros, get_overdispersion_index)
 
 
 class VAETrainer(pl.LightningModule):
@@ -405,49 +400,61 @@ class VAETrainer(pl.LightningModule):
 
 
     def on_test_end(self, end=False):
-
+        # ========== Initialize FID Metric ==========
         fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
-        self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to(self.device)
+        self.fid_metric = FrechetInceptionDistance(
+            feature=fid_feat_dim, 
+            reset_real_features=True, 
+            normalize=True
+            ).to(self.device)
 
         # ========== Save dirs ==========
         if end:
+            save_root = self.logger.save_dir
+            experiment_name = self.logger.experiment.name
             save_dirs = {
-                "latents": os.path.join(self.logger.save_dir, "latents", self.logger.experiment.name),
-                "fano": os.path.join(self.logger.save_dir, "analysis", "fano", self.logger.experiment.name),
-                "meanvar": os.path.join(self.logger.save_dir, "analysis", "meanvar", self.logger.experiment.name),
-                "spike_hist": os.path.join(self.logger.save_dir, "analysis", "spike_hist", self.logger.experiment.name),
+                "latents": os.path.join(save_root, "latents", experiment_name),
+                "fano": os.path.join(save_root, "analysis", "fano", experiment_name),
+                "meanvar": os.path.join(save_root, "analysis", "meanvar", experiment_name),
+                "spike_hist": os.path.join(save_root, "analysis", "spike_hist", experiment_name),
             }
+
         else:
+            prefix = [".save", self.cfg['dataset']['name'], self.cfg['model']['name'],
+                    self.cfg['model']['kl'], self.cfg['model']['reparam_type']]
             save_dirs = {
-                "latents": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "latents"),
-                "fano": os.path.join(".save/", self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'],"analysis", "fano"),
-                "meanvar": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "analysis", "meanvar"),
-                "spike_hist": os.path.join(".save/",self.cfg['dataset']['name'], self.cfg['model']['name'], self.cfg['model']['kl'],self.cfg['model']['reparam_type'], "analysis", "spike_hist"),
+                "latents": os.path.join(*prefix, "latents"),
+                "fano": os.path.join(*prefix, "analysis", "fano"),
+                "meanvar": os.path.join(*prefix, "analysis", "meanvar"),
+                "spike_hist": os.path.join(*prefix, "analysis", "spike_hist"),
             }
 
         for path in save_dirs.values():
             os.makedirs(path, exist_ok=True)
-        # ========== Save latent z ==========
+
+        # ========== Save Latent Representations ==========
         if len(self._test_latents) > 0:
             all_z = torch.cat(self._test_latents, dim=0).numpy()
-            print(all_z.shape)
+            # print(all_z.shape)
             all_gt_label = torch.cat(self._test_labels, dim=0).numpy()
-            np.save(os.path.join(save_dirs["latents"], 
-                                 "test_z_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
-                                 all_z)
-            np.save(os.path.join(save_dirs['latents'], 
-                                 "test_y_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
-                                 all_gt_label)
+            if self.cfg['logging']['save_files']:
+                np.save(os.path.join(save_dirs["latents"], 
+                                    "test_z_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
+                                    all_z)
+                np.save(os.path.join(save_dirs['latents'], 
+                                    "test_y_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
+                                    all_gt_label)
             print(f"[✔] Saved all test rep")
             print(f"[✔] Saved all test label")
         else:
             print("[⚠] No test z collected to save.")
             return
         all_val_spikes = torch.cat(self._val_z, dim=0).numpy()
-        print(all_val_spikes.shape)
-        np.save(os.path.join(save_dirs["latents"], 
-                                 "val_spike_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
-                                 all_val_spikes)
+        # print(all_val_spikes.shape)
+        if self.cfg['logging']['save_files']:
+            np.save(os.path.join(save_dirs["latents"], 
+                                    "val_spike_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
+                                    all_val_spikes)
         print(f"[✔] Saved all val spikes")
 
         train_clf_analysis(all_z,all_gt_label)

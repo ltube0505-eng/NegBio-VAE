@@ -21,7 +21,7 @@ os.environ['CUDA_VISIBLE_DEVICES'] =GPU
 FLAGS = flags.FLAGS
 flags.DEFINE_string("reparam_type", "gumbel", "Model type: gamma or gumbel")
 flags.DEFINE_string("kl", "gamma", "type: mc or analytical")
-flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson, laplace, gaussian or category")
+flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson, laplace, gaussian or categorical")
 flags.DEFINE_string("dataset", "MNIST", "CIFAR16 or MNIST Omniglot svhn") #
 flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
@@ -29,6 +29,7 @@ flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
 flags.DEFINE_integer("max_epochs", 200, "maximum epochs reached")
 flags.DEFINE_integer("latent_dim", 10, "latent_dim")
 flags.DEFINE_string("clf_type", "logreg", "Choice of [knn, logreg, svm]")
+flags.DEFINE_bool("save_files", False, "if save npy files or not, default false")
 
 def main(argv):
   
@@ -43,16 +44,19 @@ def main(argv):
     checkpoint_dir = os.path.join(root_dir, name)
     os.makedirs(checkpoint_dir, exist_ok=True)
 
-    if FLAGS.model_type == "poisson":
-        with open("configs/pvaeconfig.yaml", "r") as f:
+    with open("configs/train_config.yaml", "r") as f:
             cfg = yaml.safe_load(f)
-    else:
-        if FLAGS.reparam_type == "gamma":
-            with open("configs/gammaconfig.yaml", "r") as f:
-                cfg = yaml.safe_load(f)
-        elif FLAGS.reparam_type =="gumbel":
-            with open("configs/gumbelconfig.yaml", "r") as f:
-                cfg = yaml.safe_load(f)
+
+    # if FLAGS.model_type == "poisson":
+    #     with open("configs/pvaeconfig.yaml", "r") as f:
+    #         cfg = yaml.safe_load(f)
+    # else:
+    #     if FLAGS.reparam_type == "gamma":
+    #         with open("configs/gammaconfig.yaml", "r") as f:
+    #             cfg = yaml.safe_load(f)
+    #     elif FLAGS.reparam_type =="gumbel":
+    #         with open("configs/gumbelconfig.yaml", "r") as f:
+    #             cfg = yaml.safe_load(f)
 
 
     cfg['dataset']['name'] = FLAGS.dataset
@@ -61,6 +65,7 @@ def main(argv):
     cfg['model']['latent_dim'] = FLAGS.latent_dim
     cfg['encoder']['latent_dim'] = FLAGS.latent_dim
     cfg['decoder']['latent_dim'] = FLAGS.latent_dim
+    cfg['logging']['save_files'] = FLAGS.save_files
     
 
     
@@ -69,7 +74,6 @@ def main(argv):
     else:
         flatten_flag = True
 
-    print(flatten_flag)
 
     if FLAGS.local:
         dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag, use_subset=True)
@@ -117,7 +121,7 @@ def main(argv):
         **trainer_args,
         default_root_dir=checkpoint_dir,
         max_epochs=FLAGS.max_epochs,
-        num_sanity_val_steps=0,
+        num_sanity_val_steps=0
     )
 
 

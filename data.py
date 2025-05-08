@@ -97,8 +97,8 @@ class DataModule(LightningDataModule):
                  augment = False,
                  flatten = True,
                  use_subset=False,
-                 train_subset_size=5000,
-                 val_subset_size=500,
+                 train_subset_size=500,
+                 val_subset_size=50,
                  seed = 1975):
         super().__init__()
         self.dataset_name = dataset_name
@@ -155,13 +155,12 @@ class DataModule(LightningDataModule):
         print("Dataset {} is set!".format(name))
 
 
-
         if self.use_subset:
-            # 固定随机子集
             g = torch.Generator()
             g.manual_seed(self.seed)
             train_idx = torch.randperm(len(full), generator=g)[:self.train_subset_size]
             val_idx = torch.randperm(len(full), generator=g)[self.train_subset_size:self.train_subset_size+self.val_subset_size]
+          
             self.train_set = Subset(full, train_idx)
             self.val_set = Subset(full, val_idx)
             self.train_steps_per_epoch = math.ceil(len(self.train_set) / self.batch_size)
