@@ -31,6 +31,8 @@ flags.DEFINE_integer("latent_dim", 256, "latent_dim")
 flags.DEFINE_string("clf_type", "logreg", "Choice of [knn, logreg, svm]")
 flags.DEFINE_bool("save_files", False, "if save npy files or not, default false")
 flags.DEFINE_integer("mc_sample", 5, "# of samples for kl mc")
+flags.DEFINE_string("enc_type", "conv", "Choice of [linear, conv, mlp]")
+flags.DEFINE_string("dec_type", "conv", "Choice of [linear, conv, mlp]")
 
 def main(argv):
   
@@ -68,6 +70,8 @@ def main(argv):
     cfg['decoder']['latent_dim'] = FLAGS.latent_dim
     cfg['logging']['save_files'] = FLAGS.save_files
     cfg['model']['num_samples'] = FLAGS.mc_sample
+    cfg['encoder']['type'] = FLAGS.enc_type
+    cfg['decoder']['type'] = FLAGS.dec_type
     
 
     
