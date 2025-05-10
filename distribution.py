@@ -128,7 +128,7 @@ class GammaSampler:
         p_dist = torch.distributions.Gamma(r_p, rate_p)
 
         samples = q_dist.rsample((num_samples,))
-        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean()
+        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean(dim=0)
         return kl
 
 class GumbelSampler(nn.Module):
@@ -185,7 +185,7 @@ class GumbelSampler(nn.Module):
         p_dist = torch.distributions.Gamma(r_p, rate_p)
 
         samples = q_dist.rsample((self.num_samples,))
-        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean()
+        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean(dim=0)
         return kl
 
     # def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
