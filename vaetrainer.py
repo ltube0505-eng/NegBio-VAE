@@ -270,6 +270,16 @@ class VAETrainer(pl.LightningModule):
         else:
             print("[⚠] No OI values collected.")
 
+
+        #=========test=============================
+        if len(self._val_latents) > 0:
+            last_20 = self._val_latents[-5:]
+            self.save_val_z = torch.cat(last_20, dim=0)
+        else:
+            self.save_val_z = torch.cat(self._val_latents, dim=0)  
+
+        
+
         # print(len(self._val_kl_diags))
         # print(len(self._val_oi_list))
         print(f"[📊] ODI: {self.oi:.4f}")
@@ -420,7 +430,7 @@ class VAETrainer(pl.LightningModule):
             }
 
         else:
-            prefix = [".save", self.cfg['dataset']['name'], self.cfg['model']['name'],
+            prefix = ["save", self.cfg['dataset']['name'], self.cfg['model']['name'],
                     self.cfg['model']['kl'], self.cfg['model']['reparam_type']]
             save_dirs = {
                 "latents": os.path.join(*prefix, "latents"),
@@ -444,20 +454,20 @@ class VAETrainer(pl.LightningModule):
                 np.save(os.path.join(save_dirs['latents'], 
                                     "test_y_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
                                     all_gt_label)
-            print(f"[✔] Saved all test rep")
-            print(f"[✔] Saved all test label")
+                print(f"[✔] Saved all test rep")
+                print(f"[✔] Saved all test label")
         else:
             print("[⚠] No test z collected to save.")
             return
-        all_val_spikes = torch.cat(self._val_z, dim=0).numpy()
+        #all_val_spikes = torch.cat(self._val_z, dim=0).numpy()
         # print(all_val_spikes.shape)
         if self.cfg['logging']['save_files']:
             np.save(os.path.join(save_dirs["latents"], 
                                     "val_spike_all_{}.npy".format(self.cfg['model']['latent_dim'])), 
-                                    all_val_spikes)
-        print(f"[✔] Saved all val spikes")
+                                    self.save_val_z)
+            print(f"[✔] Saved all val spikes")
 
-        train_clf_analysis(all_z,all_gt_label)
+        # train_clf_analysis(all_z,all_gt_label)
 
 
 

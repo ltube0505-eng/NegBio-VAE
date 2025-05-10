@@ -27,7 +27,7 @@ flags.DEFINE_integer("seed", 42, "dataset name")
 flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
 flags.DEFINE_integer("max_epochs", 200, "maximum epochs reached")
-flags.DEFINE_integer("latent_dim", 10, "latent_dim")
+flags.DEFINE_integer("latent_dim", 256, "latent_dim")
 flags.DEFINE_string("clf_type", "logreg", "Choice of [knn, logreg, svm]")
 flags.DEFINE_bool("save_files", False, "if save npy files or not, default false")
 
@@ -58,7 +58,7 @@ def main(argv):
     #         with open("configs/gumbelconfig.yaml", "r") as f:
     #             cfg = yaml.safe_load(f)
 
-
+    cfg['model']['reparam_type'] = FLAGS.reparam_type
     cfg['dataset']['name'] = FLAGS.dataset
     cfg['model']['name'] = FLAGS.model_type
     cfg['model']['kl'] = FLAGS.kl

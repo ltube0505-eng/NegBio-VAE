@@ -50,6 +50,7 @@ class GenericVAE(nn.Module):
         if dist_type == 'poisson':
             self.prior = nn.Parameter(torch.zeros((1, latent_dim)))
         elif dist_type == 'negbio':
+            print("use {}".format(reparam_type))
             self.dist_class = NegBinomial(
                             reparam_type=reparam_type,
                             max_count=max_count,

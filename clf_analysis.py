@@ -181,7 +181,7 @@ def train_clf_analysis(z,
 
     print("start shattering...")
 
-    for train_size in [200,1000,5000]:
+    for train_size in [200]:
         acc_list = []
         for i in range(5):
 
