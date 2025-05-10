@@ -13,7 +13,8 @@ model:
   max_count: 5                # only useful for Negbio-VAE with gumbel
   tau: 1.0                    # temperature
   kl: "analytical"            # mc or analytical
-  latent_act: "sigmoid"               
+  latent_act: "sigmoid"       
+  num_samples: 5        
 # ===============================
 # Encoder configuration
 # ===============================

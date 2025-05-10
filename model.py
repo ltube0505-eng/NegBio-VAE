@@ -31,6 +31,7 @@ class GenericVAE(nn.Module):
                  max_count = 15,
                  tau = 1.0,
                  latent_act = "sigmoid",
+                 num_samples = 5,
                  **kwargs
                  ):
         super(GenericVAE, self).__init__()
@@ -55,6 +56,7 @@ class GenericVAE(nn.Module):
                             reparam_type=reparam_type,
                             max_count=max_count,
                             tau=tau,
+                            num_samples=num_samples
                         )
             self.log_r_prior = nn.Parameter(torch.zeros((1, latent_dim)))
             self.logit_p_prior = nn.Parameter(torch.zeros((1, latent_dim)))

@@ -30,6 +30,7 @@ flags.DEFINE_integer("max_epochs", 200, "maximum epochs reached")
 flags.DEFINE_integer("latent_dim", 256, "latent_dim")
 flags.DEFINE_string("clf_type", "logreg", "Choice of [knn, logreg, svm]")
 flags.DEFINE_bool("save_files", False, "if save npy files or not, default false")
+flags.DEFINE_integer("mc_sample", 5, "# of samples for kl mc")
 
 def main(argv):
   
@@ -66,6 +67,7 @@ def main(argv):
     cfg['encoder']['latent_dim'] = FLAGS.latent_dim
     cfg['decoder']['latent_dim'] = FLAGS.latent_dim
     cfg['logging']['save_files'] = FLAGS.save_files
+    cfg['model']['num_samples'] = FLAGS.mc_sample
     
 
     

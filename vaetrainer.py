@@ -37,7 +37,8 @@ class VAETrainer(pl.LightningModule):
                 reparam_type = cfg['model']['reparam_type'],
                 max_count = cfg['model']['max_count'],
                 tau = cfg['model']['tau'],
-                latent_act= cfg['model']['latent_act']
+                latent_act= cfg['model']['latent_act'],
+                num_samples = cfg['model']['num_samples']
             )
 
         self.log_images = self.cfg.get('eval', {}).get('log_images', True)
@@ -102,8 +103,7 @@ class VAETrainer(pl.LightningModule):
             dist, logit_p, z, y = self(batch)
             if self.cfg['model']['kl'] == "mc":
                 kl =  self.model.dist_class.kl_mc(self.model.log_r_prior,
-                                          self.model.logit_p_prior,
-                                          logit_p
+                                          self.model.logit_p_prior
                                         ).mean()
 
             else:
@@ -155,12 +155,18 @@ class VAETrainer(pl.LightningModule):
             # kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
             dist, logit_p, z, y = self(batch)
-            # batch hidden
-            kl_diag = self.model.dist_class.kl(
-                self.model.log_r_prior,
-                self.model.logit_p_prior,
-                logit_p
-                )
+            if self.cfg['model']['kl'] == "mc":
+                kl_diag =  self.model.dist_class.kl_mc(self.model.log_r_prior,
+                                          self.model.logit_p_prior
+                                        )
+            else:
+                
+                # batch hidden
+                kl_diag = self.model.dist_class.kl(
+                    self.model.log_r_prior,
+                    self.model.logit_p_prior,
+                    logit_p
+                    )
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl_diag = self.model.dist_class.comput_kl(logit_p)

@@ -55,12 +55,18 @@ class Poisson:
         return r-rdr+rdr*logdr
 
 class GammaSampler:
-    def __init__(self, t=0.0):
+    def __init__(self, 
+                 t=0.0,
+                 num_samples = 5):
         self.t = t
         self._cached_log_r = None
         self._cached_logit_p = None
+        self.num_samples = num_samples
 
-    def __call__(self, log_r, logit_p, hard=False):
+    def __call__(self, 
+                 log_r,
+                 logit_p, 
+                 hard=False):
         self._cached_log_r = log_r
         self._cached_logit_p = logit_p
         return self.rsample(log_r, logit_p, hard)
@@ -107,6 +113,7 @@ class GammaSampler:
     #     return kl
     def kl_mc(self, log_r_prior, logit_p_prior, num_samples=5):
         # Use cached posterior values
+        # print("USE SAMPLE", self.num_samples)
         log_r_post = self._cached_log_r
         logit_p_post = self._cached_logit_p
 
@@ -125,13 +132,17 @@ class GammaSampler:
         return kl
 
 class GumbelSampler(nn.Module):
-    def __init__(self, max_count=15, tau=1.0):
+    def __init__(self, 
+                 max_count=15, 
+                 tau=1.0,
+                 num_samples = 5):
         super().__init__()
         self.max_count = max_count
         self.tau = tau
         self.register_buffer("count_range", torch.arange(max_count).float())
         self._cached_log_r = None
         self._cached_logit_p = None
+        self.num_samples = num_samples
 
     def forward(self, log_r, logit_p, hard=False):
         self._cached_log_r = log_r
@@ -156,6 +167,26 @@ class GumbelSampler(nn.Module):
 
         z = (y * self.count_range.to(rate.device)).sum(-1)
         return z
+    
+    def kl_mc(self, log_r_prior, logit_p_prior):
+        #print("USE SAMPLE", self.num_samples)
+        # Use cached posterior values
+        log_r_post = self._cached_log_r
+        logit_p_post = self._cached_logit_p
+
+        r_q = torch.exp(log_r_post.clamp(None, 5)) + 1e-6
+        p_q = torch.sigmoid(logit_p_post.clamp(-5, 5))
+        rate_q = (1 - p_q) / p_q
+        q_dist = torch.distributions.Gamma(r_q, rate_q)
+
+        r_p = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
+        p_p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
+        rate_p = (1 - p_p) / p_p
+        p_dist = torch.distributions.Gamma(r_p, rate_p)
+
+        samples = q_dist.rsample((self.num_samples,))
+        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean()
+        return kl
 
     # def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
     #     # Construct approximate categorical distributions from softmax
@@ -176,34 +207,22 @@ class GumbelSampler(nn.Module):
     #     # Soft KL: q * (log q - log p)
     #     kl = (probs * (probs.log() - log_pmf_prior)).sum(dim=-1).mean()
     #     return kl
-    def kl_mc(self, log_r_prior, logit_p_prior, num_samples=5):
-        # Use cached posterior values
-        log_r_post = self._cached_log_r
-        logit_p_post = self._cached_logit_p
 
-        r_q = torch.exp(log_r_post.clamp(None, 5)) + 1e-6
-        p_q = torch.sigmoid(logit_p_post.clamp(-5, 5))
-        rate_q = (1 - p_q) / p_q
-        q_dist = torch.distributions.Gamma(r_q, rate_q)
-
-        r_p = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
-        p_p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
-        rate_p = (1 - p_p) / p_p
-        p_dist = torch.distributions.Gamma(r_p, rate_p)
-
-        samples = q_dist.rsample((num_samples,))
-        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean()
-        return kl
 
 
 class NegBinomial(nn.Module):
-    def __init__(self, reparam_type="gamma", max_count=15, tau=1.0):
+    def __init__(self, 
+                 reparam_type="gamma", 
+                 max_count=15, 
+                 tau=1.0,
+                 num_samples = 5):
         super().__init__()
         self.reparam_type = reparam_type
+        self.num_samples = num_samples
         if reparam_type == "gamma":
-            self.strategy = GammaSampler(t=tau)
+            self.strategy = GammaSampler(t=tau, num_samples=self.num_samples)
         elif reparam_type == "gumbel":
-            self.strategy = GumbelSampler(max_count=max_count, tau=tau)
+            self.strategy = GumbelSampler(max_count=max_count, tau=tau, num_samples=self.num_samples)
         else:
             raise ValueError(f"Unsupported reparam_type: {reparam_type}")
 
@@ -229,11 +248,11 @@ class NegBinomial(nn.Module):
         term = torch.log(q_p + 1e-8) + (1 - ab) / (ab + 1e-8) * torch.log((1 - ab + 1e-8)/(1 - p + 1e-8))
         return r * term
 
-    def kl_mc(self, log_r_prior, logit_p_prior, logit_p_post, num_samples=1):
+    def kl_mc(self, log_r_prior, logit_p_prior):
         if self.reparam_type == "gamma":
-            return self.strategy.kl_mc(log_r_prior, logit_p_prior, num_samples=num_samples)
+            return self.strategy.kl_mc(log_r_prior, logit_p_prior)
         elif self.reparam_type == "gumbel":
-            return self.strategy.kl_mc(log_r_prior, logit_p_prior, num_samples=num_samples)
+            return self.strategy.kl_mc(log_r_prior, logit_p_prior)
         else:
             raise NotImplementedError(f"No KL_MC implemented for reparam_type: {self.reparam_type}")
     
