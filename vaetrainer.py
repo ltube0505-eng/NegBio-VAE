@@ -60,7 +60,7 @@ class VAETrainer(pl.LightningModule):
         self._val_oi_list = []
         self._val_dnr = None
         self._final_val_fid = None
-        self._val_z = []
+        # self._val_z = []
 
         self._test_latents = []
         self._test_labels = []
@@ -178,10 +178,10 @@ class VAETrainer(pl.LightningModule):
             kl_diag = dist.kl()
 
         kl = kl_diag.mean()
-        if self.current_epoch == self.trainer.max_epochs - 1:
-            if not hasattr(self, '_val_z'):
-                self._val_z = []
-            self._val_z.append(z.detach().cpu())
+        # if self.current_epoch == self.trainer.max_epochs - 1:
+        #     if not hasattr(self, '_val_z'):
+        #         self._val_z = []
+        #     self._val_z.append(z.detach().cpu())
 
         if self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
@@ -254,7 +254,7 @@ class VAETrainer(pl.LightningModule):
         # if self.current_epoch % 50 ==0 or self.current_epoch == self.trainer.max_epochs - 1:
         if len(self._val_kl_diags) > 0:
             kl_diag = torch.cat(self._val_kl_diags, dim=0).mean(dim=0).numpy()# shape: [latent_dim]
-            print(kl_diag.shape)
+            # print(kl_diag.shape)
 
             dead_mask = self.find_dead_neurons(kl=kl_diag)
             dnr = dead_mask.mean().item()
@@ -709,7 +709,7 @@ def _select_and_stack(tensor_list, max_samples, normalize=False):
     selected = []
     total = 0
     for t in tensor_list:
-        print(t.shape)
+        # print(t.shape)
         if t is None:
             continue
         if total + t.size(0) > max_samples:
