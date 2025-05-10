@@ -373,15 +373,31 @@ class VAETrainer(pl.LightningModule):
         self._test_labels.append(gt_label.detach().cpu())
 
 
-        if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
-            real_imgs = batch[0].repeat(1, 3, 1, 1)
-            recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
-        elif self.cfg['dataset']['name'] == 'CIFAR16':
-            real_imgs = batch[0].view(-1, 3, 16, 16)
-            recon_imgs = y.view(-1, 3, 16, 16)
-        elif self.cfg['dataset']['name'] == 'SVHN':
-            real_imgs = batch[0].view(-1, 3, 32, 32)
-            recon_imgs = y.view(-1, 3, 32, 32)
+        if self.cfg['encoder']['type'] == "conv":
+            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
+                real_imgs = batch[0].repeat(1, 3, 1, 1)
+                recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
+            elif self.cfg['dataset']['name'] == 'CIFAR16':
+                real_imgs = batch[0].view(-1, 3, 16, 16)
+                recon_imgs = y.view(-1, 3, 16, 16)
+            elif self.cfg['dataset']['name'] == 'SVHN':
+                real_imgs = batch[0].view(-1, 3, 32, 32)
+                recon_imgs = y.view(-1, 3, 32, 32)
+
+        else:
+            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
+                real_imgs = batch[0].view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
+                recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
+            elif self.cfg['dataset']['name'] == 'CIFAR16':
+                real_imgs = batch[0].view(-1, 3, 16, 16)
+                recon_imgs = y.view(-1, 3, 16, 16)
+            elif self.cfg['dataset']['name'] == 'SVHN':
+                real_imgs = batch[0].view(-1, 3, 32, 32)
+                recon_imgs = y.view(-1, 3, 32, 32)
+            else:
+                raise ValueError(f"Unsupported dataset: {self.cfg['dataset']['name']}")
+
+
 
         self._test_recons.append(recon_imgs.detach().cpu())
         self._test_inputs.append(real_imgs.detach().cpu())
@@ -693,6 +709,7 @@ def _select_and_stack(tensor_list, max_samples, normalize=False):
     selected = []
     total = 0
     for t in tensor_list:
+        print(t.shape)
         if t is None:
             continue
         if total + t.size(0) > max_samples:
