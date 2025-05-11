@@ -93,9 +93,9 @@ class VAETrainer(pl.LightningModule):
 
         epoch = self.current_epoch + batch_idx/self.train_length
         if self.kl_annealing:
-            print("start auto kl annealing")
+            # print("start auto kl annealing")
             self.beta = min(1.0, 5*epoch/250)
-        print(self.beta)
+        # print(self.beta)
         self.model.t = max((1.0 - 0.95*epoch/250), 0.05)
         self.log('beta', self.beta)
         self.log('t', self.model.t)
