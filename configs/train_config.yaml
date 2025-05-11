@@ -14,7 +14,9 @@ model:
   tau: 1.0                    # temperature
   kl: "analytical"            # mc or analytical
   latent_act: "sigmoid"       
-  num_samples: 5        
+  num_samples: 5  
+  beta: 0                     # default 0 for auto annealing  
+  kl_annealing: True    
 # ===============================
 # Encoder configuration
 # ===============================

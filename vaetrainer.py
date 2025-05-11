@@ -47,7 +47,8 @@ class VAETrainer(pl.LightningModule):
         self.opt = opt_map[opt_name]
         self.opt_params = {k: v for k, v in cfg['optimizer'].items() if k != 'name'}
 
-        self.beta = 0.0
+        self.beta = self.cfg['model']['beta']
+        self.kl_annealing = self.cfg['model']['kl_annealing']
         self.train_length = None
         fid_feat_dim = self.cfg.get('eval', {}).get('fid_feature', 64)
         self.fid_metric = FrechetInceptionDistance(feature=fid_feat_dim, reset_real_features=True, normalize=True).to("cuda" if torch.cuda.is_available() else "cpu")
@@ -91,7 +92,10 @@ class VAETrainer(pl.LightningModule):
         x = batch[0].view(batch[0].size(0), -1)
 
         epoch = self.current_epoch + batch_idx/self.train_length
-        self.beta = min(1.0, 5*epoch/250)
+        if self.kl_annealing:
+            print("start auto kl annealing")
+            self.beta = min(1.0, 5*epoch/250)
+        print(self.beta)
         self.model.t = max((1.0 - 0.95*epoch/250), 0.05)
         self.log('beta', self.beta)
         self.log('t', self.model.t)

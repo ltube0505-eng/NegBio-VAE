@@ -33,6 +33,8 @@ flags.DEFINE_bool("save_files", False, "if save npy files or not, default false"
 flags.DEFINE_integer("mc_sample", 5, "# of samples for kl mc")
 flags.DEFINE_string("enc_type", "conv", "Choice of [linear, conv, mlp]")
 flags.DEFINE_string("dec_type", "conv", "Choice of [linear, conv, mlp]")
+flags.DEFINE_bool('kl_annealing', True, "kl annealing")  # in command line use --kl_annealing=False to stop auto kl annealing
+flags.DEFINE_float('beta', 0.0, 'beta for kl')
 
 def main(argv):
   
@@ -61,19 +63,42 @@ def main(argv):
     #         with open("configs/gumbelconfig.yaml", "r") as f:
     #             cfg = yaml.safe_load(f)
 
-    cfg['model']['reparam_type'] = FLAGS.reparam_type
-    cfg['dataset']['name'] = FLAGS.dataset
-    cfg['model']['name'] = FLAGS.model_type
-    cfg['model']['kl'] = FLAGS.kl
-    cfg['model']['latent_dim'] = FLAGS.latent_dim
-    cfg['encoder']['latent_dim'] = FLAGS.latent_dim
-    cfg['decoder']['latent_dim'] = FLAGS.latent_dim
-    cfg['logging']['save_files'] = FLAGS.save_files
-    cfg['model']['num_samples'] = FLAGS.mc_sample
-    cfg['encoder']['type'] = FLAGS.enc_type
-    cfg['decoder']['type'] = FLAGS.dec_type
-    
+    # cfg['model']['reparam_type'] = FLAGS.reparam_type
+    # cfg['dataset']['name'] = FLAGS.dataset
+    # cfg['model']['name'] = FLAGS.model_type
+    # cfg['model']['kl'] = FLAGS.kl
+    # cfg['model']['latent_dim'] = FLAGS.latent_dim
+    # cfg['encoder']['latent_dim'] = FLAGS.latent_dim
+    # cfg['decoder']['latent_dim'] = FLAGS.latent_dim
+    # cfg['logging']['save_files'] = FLAGS.save_files
+    # cfg['model']['num_samples'] = FLAGS.mc_sample
+    # cfg['encoder']['type'] = FLAGS.enc_type
+    # cfg['decoder']['type'] = FLAGS.dec_type
+    # cfg['model']['beta'] = FLAGS.beta
+    # cfg['model']['kl_annealing'] = FLAGS.kl_annealing
+    def update_cfg_from_flags(cfg, flags):
+        update_map = {
+            ('model', 'reparam_type'): flags.reparam_type,
+            ('dataset', 'name'): flags.dataset,
+            ('model', 'name'): flags.model_type,
+            ('model', 'kl'): flags.kl,
+            ('model', 'latent_dim'): flags.latent_dim,
+            ('encoder', 'latent_dim'): flags.latent_dim,
+            ('decoder', 'latent_dim'): flags.latent_dim,
+            ('logging', 'save_files'): flags.save_files,
+            ('model', 'num_samples'): flags.mc_sample,
+            ('encoder', 'type'): flags.enc_type,
+            ('decoder', 'type'): flags.dec_type,
+            ('model', 'beta'): flags.beta,
+            ('model', 'kl_annealing'): flags.kl_annealing,
+        }
 
+        for (section, key), value in update_map.items():
+            cfg.setdefault(section, {})[key] = value
+
+    update_cfg_from_flags(cfg, FLAGS)
+  
+        
     
     if cfg['encoder']['type'] == "conv":
         flatten_flag = False
@@ -85,7 +110,6 @@ def main(argv):
         dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag, use_subset=True)
     else:
         dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag)
-    
     
     model = VAETrainer(cfg)
 
