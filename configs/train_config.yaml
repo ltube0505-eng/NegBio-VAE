@@ -24,7 +24,7 @@ encoder:
     MNIST: 784
     CIFAR16: 768
     Omniglot: 28
-    SVHN: 768
+    SVHN: 3072
   latent_dim: 256
   use_norm: true
   bias: true
@@ -50,7 +50,7 @@ decoder:
     MNIST: 7
     CIFAR16: 4
     Omniglot: 7
-    SVHN: 4
+    SVHN: 8
 # ===============================
 # Optimizer configuration
 # ===============================

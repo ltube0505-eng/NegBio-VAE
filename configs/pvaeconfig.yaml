@@ -23,7 +23,7 @@ encoder:
   type: "linear"                # or "linear"
   input_dim:                # only needed for linear encoder
     MNIST: 784
-    SVHN: 784
+    SVHN: 3072
     CIFAR16: 768
     Omniglot: 28
   latent_dim: 128
