@@ -403,7 +403,7 @@ class VAETrainer(pl.LightningModule):
         self._test_inputs.append(real_imgs.detach().cpu())
 
 
-        if batch_idx % 10 == 0:
+        if batch_idx == 0:
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot"]:
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
@@ -416,9 +416,12 @@ class VAETrainer(pl.LightningModule):
             else:
                 raise ValueError(f"Unseen dataset name: {self.cfg['dataset']['name']}")
             self.logger.experiment.log({
-                'recons': wdb.Image(fig_y, caption="recons"),
-                'inputs': wdb.Image(fig_x, caption="inputs"),
+                'test_recons': wdb.Image(fig_y, caption="test_recons"),
+                'test_inputs': wdb.Image(fig_x, caption="test_inputs"),
             })
+
+
+
             # log_latent_mean_vs_var(
             #     logger=self.logger.experiment,
             #     z=z,
