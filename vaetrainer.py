@@ -121,10 +121,6 @@ class VAETrainer(pl.LightningModule):
             dist, (loc, log_scale), z, y = self(batch)
             kl = dist.kl().mean()
 
-        """
-        MNIST:200 784 ->200 1 28 28
-        CIFAR16:512 768 -> 512 3 16 16
-        """
         if self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 x = batch[0].view(-1, 1, 28, 28)

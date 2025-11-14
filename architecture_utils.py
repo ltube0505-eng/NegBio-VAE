@@ -387,7 +387,7 @@ def _build_conv_enc(
 		add_fc: bool = False, ) -> nn.Sequential:
 
 	if dataset.endswith('MNIST'):
-		kws['factorized'] = False  # FactorizedReduce incompatible
+		kws['factorized'] = False  
 		n_layers = 3
 	elif dataset in ['vH16', 'CIFAR16']:
 		n_layers = 2
@@ -397,14 +397,12 @@ def _build_conv_enc(
 		raise ValueError(dataset)
 
 	layers = [Cell(nch, nch, 'normal_pre', **kws)]
-	# conv
 	for _ in range(n_layers):
 		layers.extend([
 			Cell(nch, nch * MULT, 'down_enc', **kws),
 			Cell(nch * MULT, nch * MULT, 'normal_pre', **kws),
 		])
 		nch *= MULT
-	# pool + flatten
 	kws_conv_pool = dict(
 		dim=nch,
 		kernel_size=4,
@@ -417,7 +415,7 @@ def _build_conv_enc(
 		ResConvPool(**kws_conv_pool),
 		nn.Flatten(start_dim=1),
 	])
-	# fc?
+
 	if add_fc:
 		for _ in range(n_layers):
 			layers.extend([
@@ -487,9 +485,9 @@ def filter_kwargs(
 	if not kw:
 		return {}
 	try:
-		if isinstance(fn, type):  # class
+		if isinstance(fn, type):  
 			params = get_all_init_params(fn)
-		elif callable(fn):  # function
+		elif callable(fn):  
 			params = inspect.signature(fn).parameters
 		else:
 			raise ValueError(type(fn).__name__)

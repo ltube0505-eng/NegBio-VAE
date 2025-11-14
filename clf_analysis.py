@@ -142,7 +142,6 @@ def evaluate_on_subsets(
         z_train = z[train_indices]
         y_train = y[train_indices]
 
-        # 构造 z_dict 和 y_dict
         z_dict = {'trn': z_train, 'vld': z_test}
         y_dict = {'trn': y_train, 'vld': y_test}
 
@@ -169,12 +168,12 @@ def train_clf_analysis(z,
         for i in range(5):
 
             result_df = evaluate_on_subsets(
-                z=z,  # shape [N, D]
-                y=y,  # shape [N]
+                z=z,
+                y=y, 
                 train_sizes=[train_size],
                 test_size=5000,
                 random_seed = i*100,
-                mode='clf',  # 或 'shatter'
+                mode='clf',  
                 clf_type=clf_type
             )
             acc_list.append(result_df['accuracy'].mean())
@@ -188,8 +187,8 @@ def train_clf_analysis(z,
         for i in range(5):
 
             result_df = evaluate_on_subsets(
-                z=z,  # shape [N, D]
-                y=y,  # shape [N]
+                z=z,  
+                y=y,  
                 train_sizes=[train_size],
                 test_size=5000,
                 random_seed = i*10,

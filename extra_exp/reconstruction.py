@@ -135,7 +135,6 @@ def main(argrv):
     print(cfg["model"]["reparam_type"])
 
     dm = DataModule(FLAGS.dataset, data_dir='/root/nbvae/datasets',batch_size=100, flatten=False)
-    # dm.prepare_data()
     dm.setup()
     train_loader = dm.train_dataloader()
     val_loader = dm.val_dataloader()
