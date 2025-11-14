@@ -72,7 +72,7 @@ def get_transform(dataset_name, device, grey=False, augment=False, flatten=True,
     if grey:
         tf.append(transforms.Grayscale())
 
-    if augment and dataset_name in ['CIFAR10', 'CIFAR16']:# 'CelebA', 'CelebA64', 'CelebAHQ', 'FFHQ']:
+    if augment and dataset_name in ['CIFAR10', 'CIFAR16']:
         tf.insert(0, transforms.RandomHorizontalFlip(p=0.5))
 
     tf.append(transforms.ToTensor())
@@ -81,7 +81,7 @@ def get_transform(dataset_name, device, grey=False, augment=False, flatten=True,
         if grey:
             tf.append(transforms.Normalize(mean=[0.5], std=[0.5]))
         else:
-            tf.append(transforms.Normalize(mean=[0.5]*3, std=[0.5]*3)) #[-1,1] 
+            tf.append(transforms.Normalize(mean=[0.5]*3, std=[0.5]*3))
 
     if flatten:
         tf.append(transforms.Lambda(lambda x: x.view(-1)))
