@@ -14,7 +14,7 @@ model:
   tau: 1.0                    # temperature
   kl: "analytical"            # mc or analytical
   latent_act: "sigmoid"       
-  num_samples: 5  
+  num_samples: 5 
   beta: 0                     # default 0 for auto annealing  
   kl_annealing: True    
 # ===============================
@@ -24,9 +24,12 @@ encoder:
   type: "conv"                # or "linear" "conv" "mlp"
   input_dim:                # only needed for linear encoder
     MNIST: 784
+    fmnist: 784
     CIFAR16: 768
     Omniglot: 28
     SVHN: 3072
+    CelebA64: 12288  #64*64*3
+    CelebAHQ: 49152
   latent_dim: 256
   use_norm: true
   bias: true
@@ -45,14 +48,20 @@ decoder:
   latent_dim: 256
   out_channel:                # only needed for conv decoder
     MNIST: 1
+    fmnist: 1
     CIFAR16: 3
     Omniglot: 1
     SVHN: 3
+    CelebA64: 3
+    CelebAHQ: 3
   size:
-    MNIST: 7
-    CIFAR16: 4
-    Omniglot: 7
-    SVHN: 8
+    MNIST: 7      #
+    fmnist: 7 
+    CIFAR16: 4   # 16 * 16
+    Omniglot: 7   
+    SVHN: 8   
+    CelebA64: 16
+    CelebAHQ: 32
 # ===============================
 # Optimizer configuration
 # ===============================
@@ -74,8 +83,8 @@ trainer:
 # ===============================
 
 eval:
-  fid_feature: 64
-  log_images: true
+  fid_feature: 2048 
+  log_images: false
 
 
 
