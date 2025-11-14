@@ -400,7 +400,7 @@ class VAETrainer(pl.LightningModule):
                 x = x.view(-1, 3, 16, 16)
             elif self.cfg['dataset']['name'] == 'SVHN':
                 x = x.view(-1, 3, 32, 32)
-            elif self.cfg['dataset']['name'] in ['CelebA', 'CelebA64', 'FFHQ']:  # ✅ 新增
+            elif self.cfg['dataset']['name'] in ['CelebA', 'CelebA64', 'FFHQ']: 
                 x = x.view(-1, 3, 64, 64)
             elif self.cfg['dataset']['name'] in ['CelebAHQ']:
                 x = x.view(-1, 3, 128, 128)
@@ -411,7 +411,7 @@ class VAETrainer(pl.LightningModule):
         if kl_diag.dim() > 1:
             per_sample_kl = kl_diag.sum(dim=1)
         else:
-            per_sample_kl = kl_diag   # 如果已经是 per-sample scalar
+            per_sample_kl = kl_diag
         per_sample_nll = per_sample_recon + per_sample_kl
 
         self._test_recon_terms.append(per_sample_recon.detach().cpu())

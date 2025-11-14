@@ -104,7 +104,7 @@ class ResNetEncoder(nn.Module):
 
         self.fc_hidden1,self.fc_hidden2, self.latent_dim = fc_hidden1, fc_hidden2, latent_dim
         resnet = models.resnet152(pretrained=True)
-        #去掉最后一层fc
+
         modules = list(resnet.children())[:-1]
         self.resnet = nn.Sequential(*modules)
         self.fc1= nn.Linear(resnet.fc.in_features,self.fc_hidden1)
@@ -265,8 +265,6 @@ class ConvDecoder(nn.Module):
                  normalize_dim=0, tanh=False):
         super().__init__()
         self.size=size
-        # Fully connected layer to expand from latent_dim to feature map
-        # self.fc_dec = nn.Linear(latent_dim, 128 * 7 * 7)
         self.fc_dec = Linear(latent_dim, 128 * self.size * self.size, normalize=normalize, normalize_dim=normalize_dim)
     
         if tanh:
