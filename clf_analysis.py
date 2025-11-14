@@ -15,6 +15,8 @@ from tqdm import tqdm
 
 warnings.filterwarnings("ignore")
 
+# The following clf and shattering code are adapted from PoissonVAE repository:
+# https://github.com/hadivafaii/PoissonVAE
 
 def clf_analysis_simple(
     mode: str,
