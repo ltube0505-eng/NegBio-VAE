@@ -32,7 +32,7 @@ class CelebAHQDataset(Dataset):
 
     def __getitem__(self, idx):
         img_path = self.images[idx]
-        img = Image.open(img_path).convert("RGB")  # 保证3通道
+        img = Image.open(img_path).convert("RGB")
         if self.transform is not None:
             img = self.transform(img)
         return img,idx
@@ -161,7 +161,7 @@ class DataModule(LightningDataModule):
             dataset_cls(root=self.data_dir, train=True, download=True)
             dataset_cls(root=self.data_dir, train=False, download=True)
 
-    def setup(self, stage=None): # 实例化数据并切分
+    def setup(self, stage=None): 
         name = self.dataset_name
         
         if name == "fmnist":
