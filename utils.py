@@ -1,5 +1,4 @@
 from typing import *
-
 import matplotlib.pyplot as plt
 import numpy as np
 import seaborn as sns
@@ -7,7 +6,6 @@ import torch.nn.functional as F
 from scipy.linalg import sqrtm
 from torchmetrics.image.inception import InceptionScore
 from torchvision.models import inception_v3
-
 import wandb as wdb
 from architecture import *
 
@@ -23,9 +21,7 @@ def build_encoder(cfg):
             else base_latent_dim
         )
 
-    # latent_dim = encoder_cfg.get('latent_dim', 128)
     if name == 'linear':
-        print(encoder_cfg['input_dim'][cfg['dataset']['name']])
         return LinearEncoder(
             input_dim=encoder_cfg['input_dim'][cfg['dataset']['name']],
             latent_dim=latent_dim
@@ -36,10 +32,7 @@ def build_encoder(cfg):
                            dataset = cfg['dataset']['name'],
                            use_norm=encoder_cfg['use_norm'],
                            bias = encoder_cfg['bias'])
-        # return ConvEncoder(encoder_cfg,
-        #                    cfg['dataset']['name'], 
-        #                    latent_dim=128, 
-        #                    n_ch=32)
+   
     elif name == 'mlp':
           return MLPEncoder(
                 input_dim=encoder_cfg['input_dim'][cfg['dataset']['name']],
@@ -54,14 +47,13 @@ def build_encoder(cfg):
 
 
 
-
-
 def build_decoder(cfg):
     decoder_cfg = cfg['decoder']
     name = decoder_cfg['type'].lower()
     latent_dim = decoder_cfg.get('latent_dim', 128)
+    print("decoder_latent_dim", latent_dim)
     if name == 'linear':
-        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16', 'CelebA64', 'FFHQ']:
             return LinearDecoder(
                 latent_dim=latent_dim,
                 output_dim=cfg['encoder']['input_dim'][cfg['dataset']['name']],
@@ -73,7 +65,7 @@ def build_decoder(cfg):
                 output_dim=cfg['encoder']['input_dim'][cfg['dataset']['name']]
             )
     elif name == 'conv':
-        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16','CelebA64', 'FFHQ']:
              return ConvDecoder(latent_dim=latent_dim, 
                             out_channels=cfg['decoder']['out_channel'][cfg['dataset']['name']],
                             size=cfg['decoder']['size'][cfg['dataset']['name']],
@@ -85,7 +77,7 @@ def build_decoder(cfg):
                             size=cfg['decoder']['size'][cfg['dataset']['name']]
             )
     elif name == 'mlp':
-        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+        if cfg['dataset']['name'] in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16','CelebA64', 'FFHQ']:
             return MLPDecoder(
                         latent_dim=latent_dim,
                         output_dim=cfg['encoder']['input_dim'][cfg['dataset']['name']],
@@ -106,56 +98,6 @@ def build_decoder(cfg):
         raise ValueError(f"Unsupported decoder type: {name}")
     
 
-def log_latent_mean_vs_var(logger, 
-                           z, 
-                           save_dir, 
-                           step_name = "val", 
-                           caption = "Latent mean vs variance",
-                           savelocal = True):
-    if isinstance(z, torch.Tensor):
-        z_mean = z.mean(dim=0).cpu()
-        z_var = z.var(dim=0).cpu()
-    else:
-        z_mean = np.mean(z, axis=0)
-        z_var = np.var(z, axis=0)
-
-
-    # z_mean = z.mean(dim=0).cpu()
-    # z_var = z.var(dim=0).cpu()
-
-    # Plot mean vs var
-    fig, ax = plt.subplots(figsize=(5, 5))
-    ax.scatter(z_mean, z_var, alpha=0.6, label='Latent units')
-    ax.plot([0, z_mean.max()], [0, z_mean.max()], 'r--', label='Poisson (mean=var)')
-    ax.set_xlabel('Mean of $z_i$')
-    ax.set_ylabel('Variance of $z_i$')
-    ax.set_title('Latent Mean vs Variance')
-    ax.legend()
-    plt.tight_layout()
-    if savelocal is True:
-        mean_var_path = os.path.join(save_dir, "mean_var.pdf")
-        fig.savefig(mean_var_path)
-    logger.log({
-        "latent_mean_vs_var": wdb.Image(fig, caption=caption),
-    })
-    plt.close(fig)
-
-
-# def get_overdispersion_index(z, eps=1e-8):
-#     if isinstance(z, torch.Tensor):
-#         z_mean = z.mean(dim=0).cpu()
-#         z_var = z.var(dim=0).cpu()
-#     else:
-#         z_mean = np.mean(z, axis=0)
-#         z_var = np.var(z, axis=0)
-
-#     # z_mean = z.mean(dim=0).cpu()
-#     # z_var = z.var(dim=0).cpu()
-
-#     overdispersion_index = ((z_var + eps) / (z_mean + eps)).mean().item()
-
-#     return overdispersion_index
-
 def get_overdispersion_index(z, eps=1e-8):
     if isinstance(z, torch.Tensor):
         z_mean = z.mean(dim=0)
@@ -165,11 +107,6 @@ def get_overdispersion_index(z, eps=1e-8):
         z_var = np.var(z, axis=0)
 
     return ((z_var + eps) / (z_mean + eps)).mean()
-
-
-def gumbel_entropy(y):
-    # y: [B, D, K] softmax output
-    return -(y * y.clamp(min=1e-8).log()).sum(dim=-1).mean()
 
 
 
@@ -183,7 +120,6 @@ def tonp(x: Union[torch.Tensor, np.ndarray]):
      
 
 def find_last_contiguous_zeros(mask: np.ndarray, w: int):
-	# mask = hist > 0.0
 	m = mask.astype(bool)
 	zero_count = 0
 	for idx, val in enumerate(m[::-1]):
@@ -198,7 +134,6 @@ def find_last_contiguous_zeros(mask: np.ndarray, w: int):
 
 
 def find_critical_ids(mask: np.ndarray):
-	# mask = hist > 0.0
 	m = mask.astype(bool)
 
 	first_zero = 0
@@ -214,71 +149,6 @@ def find_critical_ids(mask: np.ndarray):
 			break
 
 	return first_zero, last_zero
-
-
-
-
-def plot_fano(z, save_dir, logger):
-    if isinstance(z, torch.Tensor):
-        z_mean = z.mean(dim=0).cpu()
-        z_var = z.var(dim=0).cpu()
-    else:
-        z_mean = np.mean(z, axis=0)
-        z_var = np.var(z, axis=0)
-
-
-    fano_factors = z_var / (z_mean + 1e-8)
-
-    fano_fig = plt.figure(figsize=(6, 4))
-    sns.histplot(fano_factors, bins=20, kde=True, color='skyblue')
-    plt.axvline(1.0, color='red', linestyle='--', label='Poisson baseline (Fano=1)')
-    plt.title('Fano Factor Distribution across Latent Units')
-    plt.xlabel('Fano Factor')
-    plt.ylabel('Number of Latent Units')
-    plt.legend()
-    plt.tight_layout()
-    fano_path = os.path.join(save_dir, "fano_factor_hist.pdf")
-    fano_fig.savefig(fano_path)
-    plt.close(fano_fig)
-
-    logger.experiment.log({
-        "fano_factor_hist": wdb.Image(fano_fig, caption = "Fano Factor Distribution across Latent Units")
-    })
-    
-
-
-
-def spike_count_hist(z, save_dir, logger, top_k = 3):
-    # Select top-k latent units by variance
-    if isinstance(z, torch.Tensor):
-        z_mean = z.mean(dim=0).cpu()
-        z_var = z.var(dim=0).cpu()
-    else:
-        z_mean = np.mean(z, axis=0)
-        z_var = np.var(z, axis=0)
-
-    selected_units = np.argsort(z_var)[-top_k:][::-1]  # descending order
-    selected_units = [0, 10, 25] if z.shape[1] >= 26 else list(range(min(3, z.shape[1])))
-
-    spike_fig, axs = plt.subplots(1, len(selected_units), figsize=(12, 4))
-    for i, idx in enumerate(selected_units):
-        unit_counts = z[:, idx]
-        sns.histplot(unit_counts, bins=range(0, int(unit_counts.max()) + 2),
-                     stat='probability', kde=False, ax=axs[i],
-                     color='steelblue', edgecolor='black')
-        axs[i].set_title(f'Latent Unit {idx}')
-        axs[i].set_xlabel('Spike Count')
-        axs[i].set_ylabel('Probability')
-        axs[i].set_xlim(left=0)
-    plt.suptitle('Spike Count Distributions for Selected Latent Units')
-    plt.tight_layout(rect=[0, 0.03, 1, 0.95])
-    spike_hist_path = os.path.join(save_dir, "spike_count_histograms.pdf")
-    spike_fig.savefig(spike_hist_path)
-    plt.close(spike_fig)
-
-    logger.experiment.log({
-        "spike_count_histograms": wdb.Image(spike_fig)
-    })
 
 
 
@@ -334,32 +204,28 @@ def softclamp_sym(x, clamp=5.3):
     return clamp * torch.tanh(x / clamp)
 
 
-def compute_fid(real_features, fake_features, eps=1e-6):
-    mu1, sigma1 = real_features.mean(0).cpu().numpy(), np.cov(real_features.cpu().numpy(), rowvar=False)
-    mu2, sigma2 = fake_features.mean(0).cpu().numpy(), np.cov(fake_features.cpu().numpy(), rowvar=False)
-
-    diff = mu1 - mu2
-    covmean, _ = sqrtm(sigma1.dot(sigma2), disp=False)
-
-    if not np.isfinite(covmean).all():
-        print("[⚠] fid: sqrtm not finite, adding epsilon to diagonal.")
-        sigma1 += np.eye(sigma1.shape[0]) * eps
-        sigma2 += np.eye(sigma2.shape[0]) * eps
-        covmean = sqrtm(sigma1.dot(sigma2))
-
-    # If sqrtm returns complex
-    if np.iscomplexobj(covmean):
-        covmean = covmean.real
-
-    fid = diff.dot(diff) + np.trace(sigma1 + sigma2 - 2 * covmean)
-    return float(fid)
-
-def compute_inception_score_from_images(imgs, splits=10):
-    imgs = (imgs.clamp(0, 1) * 2 - 1)  # rescale to [-1, 1] for InceptionV3
-    metric = InceptionScore(normalize=True).cpu()
-    metric.update(imgs.cpu())
-    is_mean, is_std = metric.compute()
-    return is_mean.item(), is_std.item()
 
 def to_cpu_float64(x):
     return x.to(dtype=torch.float64, device="cpu")
+
+def _select_and_stack(tensor_list, max_samples, normalize=False):
+    selected = []
+    total = 0
+    for t in tensor_list:
+        if t is None:
+            continue
+        if total + t.size(0) > max_samples:
+            selected.append(t[:max_samples - total])
+            break
+        selected.append(t)
+        total += t.size(0)
+
+    if not selected:
+        return None
+
+    out = torch.cat(selected, dim=0)
+    if normalize:
+        out = ((out + 1) / 2).clamp(0, 1)
+    else:
+        out = out.clamp(0, 1)
+    return out

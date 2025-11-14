@@ -1,33 +1,37 @@
-import torch 
-import re
-import os
-import json
-import h5py
-import torch
-import shutil
-import pickle
-import joblib
-import random
-import inspect
-import logging
-import pathlib
 import argparse
-import warnings
-import operator
-import functools
-import itertools
 import collections
+import functools
+import inspect
+import itertools
+import json
+import logging
+import operator
+import os
+import pathlib
+import pickle
+import random
+import re
+import shutil
+import warnings
+from datetime import datetime
+from os.path import join as pjoin
+from typing import *
+
+import h5py
+import joblib
 import numpy as np
 import pandas as pd
-from torch import nn
+import torch
 from scipy import stats as sp_stats
+from torch import nn
 from torch.nn import functional as F
-from os.path import join as pjoin
-from datetime import datetime
 from tqdm import tqdm
-from typing import *
+
 MULT = 2
 
+
+# The following network functions are adapted from PoissonVAE repository:
+# https://github.com/hadivafaii/PoissonVAE
 
 
 class Linear(nn.Linear):

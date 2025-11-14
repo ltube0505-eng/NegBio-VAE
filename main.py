@@ -9,73 +9,43 @@ from pytorch_lightning import Trainer, seed_everything
 from pytorch_lightning.loggers import CSVLogger, TensorBoardLogger, wandb
 
 import wandb as wdb
-from callback import GumbelMonitorCallback
-from clf_analysis import train_clf_analysis
-from data import DataModule, MNISTDataModule
+from data import DataModule
 from vaetrainer import VAETrainer
 
 warnings.filterwarnings("ignore")
-GPU = '1' #设置GPU 0 1 2 可见
+GPU = '0' 
 os.environ['CUDA_VISIBLE_DEVICES'] =GPU
 
 FLAGS = flags.FLAGS
+flags.DEFINE_string("config_path", "configs/train_config.yaml", "Path to training config YAML file")
 flags.DEFINE_string("reparam_type", "gumbel", "Model type: gamma or gumbel")
 flags.DEFINE_string("kl", "gamma", "type: mc or analytical")
 flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson, laplace, gaussian or categorical")
-flags.DEFINE_string("dataset", "MNIST", "CIFAR16 or MNIST Omniglot svhn") #
-flags.DEFINE_integer("seed", 42, "dataset name")
-flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
-flags.DEFINE_integer("bsize_local", 64, "training batch size for local")
+flags.DEFINE_string("dataset", "MNIST", "CIFAR16 or MNIST Omniglot svhn") 
+flags.DEFINE_string("enc_type", "conv", "Choice of [linear, conv, mlp]")
+flags.DEFINE_string("dec_type", "conv", "Choice of [linear, conv, mlp]")
+flags.DEFINE_integer("seed", 42, "seed")
+flags.DEFINE_integer("bsize", 512, "training batch size")
 flags.DEFINE_integer("max_epochs", 200, "maximum epochs reached")
 flags.DEFINE_integer("latent_dim", 256, "latent_dim")
 flags.DEFINE_string("clf_type", "logreg", "Choice of [knn, logreg, svm]")
 flags.DEFINE_bool("save_files", False, "if save npy files or not, default false")
 flags.DEFINE_integer("mc_sample", 5, "# of samples for kl mc")
-flags.DEFINE_string("enc_type", "conv", "Choice of [linear, conv, mlp]")
-flags.DEFINE_string("dec_type", "conv", "Choice of [linear, conv, mlp]")
+flags.DEFINE_float("tau", 1.0, "temperature")
 flags.DEFINE_bool('kl_annealing', True, "kl annealing")  # in command line use --kl_annealing=False to stop auto kl annealing
 flags.DEFINE_float('beta', 0.0, 'beta for kl')
+
+flags.DEFINE_bool("local", False, "If local, run small set of MNIST")
 
 def main(argv):
   
     seed_everything(FLAGS.seed, workers=True)
 
-    name = f'{FLAGS.model_type}-{FLAGS.reparam_type}-{FLAGS.dataset}-{FLAGS.seed}'
-    data_dir = "/Data/Datasets/" 
-    project_name = "negbio" 
-    root_dir = "data"
-    bsize = 512
 
-    checkpoint_dir = os.path.join(root_dir, name)
-    os.makedirs(checkpoint_dir, exist_ok=True)
 
-    with open("configs/train_config.yaml", "r") as f:
-            cfg = yaml.safe_load(f)
+    with open(FLAGS.config_path, "r") as f:
+            cfg = yaml.safe_load(f) 
 
-    # if FLAGS.model_type == "poisson":
-    #     with open("configs/pvaeconfig.yaml", "r") as f:
-    #         cfg = yaml.safe_load(f)
-    # else:
-    #     if FLAGS.reparam_type == "gamma":
-    #         with open("configs/gammaconfig.yaml", "r") as f:
-    #             cfg = yaml.safe_load(f)
-    #     elif FLAGS.reparam_type =="gumbel":
-    #         with open("configs/gumbelconfig.yaml", "r") as f:
-    #             cfg = yaml.safe_load(f)
-
-    # cfg['model']['reparam_type'] = FLAGS.reparam_type
-    # cfg['dataset']['name'] = FLAGS.dataset
-    # cfg['model']['name'] = FLAGS.model_type
-    # cfg['model']['kl'] = FLAGS.kl
-    # cfg['model']['latent_dim'] = FLAGS.latent_dim
-    # cfg['encoder']['latent_dim'] = FLAGS.latent_dim
-    # cfg['decoder']['latent_dim'] = FLAGS.latent_dim
-    # cfg['logging']['save_files'] = FLAGS.save_files
-    # cfg['model']['num_samples'] = FLAGS.mc_sample
-    # cfg['encoder']['type'] = FLAGS.enc_type
-    # cfg['decoder']['type'] = FLAGS.dec_type
-    # cfg['model']['beta'] = FLAGS.beta
-    # cfg['model']['kl_annealing'] = FLAGS.kl_annealing
     def update_cfg_from_flags(cfg, flags):
         update_map = {
             ('model', 'reparam_type'): flags.reparam_type,
@@ -91,14 +61,20 @@ def main(argv):
             ('decoder', 'type'): flags.dec_type,
             ('model', 'beta'): flags.beta,
             ('model', 'kl_annealing'): flags.kl_annealing,
+            ('model', 'tau'): flags.tau,
         }
 
         for (section, key), value in update_map.items():
             cfg.setdefault(section, {})[key] = value
 
     update_cfg_from_flags(cfg, FLAGS)
-  
-        
+    name = f'{FLAGS.model_type}-{FLAGS.reparam_type}-{FLAGS.kl}-{FLAGS.dataset}-{FLAGS.seed}'
+    data_dir = "/Data/Datasets/" 
+    project_name = FLAGS.model_type 
+    root_dir = "ckpt/method-1/"
+
+    checkpoint_dir = os.path.join(root_dir, name)
+    os.makedirs(checkpoint_dir, exist_ok=True) 
     
     if cfg['encoder']['type'] == "conv":
         flatten_flag = False
@@ -107,10 +83,10 @@ def main(argv):
 
 
     if FLAGS.local:
-        dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag, use_subset=True)
+        # LOCAL IS USED FOR DEBUGGING PURPOSE ONLY - RUN ON LOCAL CPU ENV
+        dm = DataModule(FLAGS.dataset, batch_size=FLAGS.bsize, flatten=flatten_flag, use_subset=True)
     else:
-        dm = DataModule(FLAGS.dataset, batch_size=bsize, flatten=flatten_flag)
-    
+        dm = DataModule(FLAGS.dataset, batch_size=FLAGS.bsize, flatten=flatten_flag)
     model = VAETrainer(cfg)
 
     if FLAGS.local:
@@ -120,7 +96,10 @@ def main(argv):
     else:
         accelerator = "gpu"
         devices = [0]
-        strategy = "ddp"
+        if FLAGS.model_type == "gaussian":
+            strategy = "ddp_find_unused_parameters_true"
+        else:
+            strategy = "ddp"
 
             
     trainer_args = {
@@ -132,19 +111,17 @@ def main(argv):
                 mode='min',
                 verbose=False
             ),
-            GumbelMonitorCallback(log_every_n_steps=1)
-
         ],
-        #"accelerator": "auto",
-        "logger": wandb.WandbLogger(project=project_name, name=name, save_code=False),
+        # "logger": wandb.WandbLogger(project=project_name, name=name, save_code=False,offline=True),
+        "logger": False,
         "gradient_clip_val": 1.0,
         "accelerator": accelerator,
         'devices':devices
-        # 'strategy':"ddp" if accelerator == "gpu" else None
     }
     if strategy is not None:
         trainer_args["strategy"] = strategy
-    trainer_args["logger"].watch(model, log="all")
+    if trainer_args["logger"] and hasattr(trainer_args["logger"], "watch"):
+        trainer_args["logger"].watch(model, log="all")
 
     
     trainer = pl.Trainer(

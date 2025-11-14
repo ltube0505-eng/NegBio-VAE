@@ -1,6 +1,5 @@
 import math
 import os
-
 import matplotlib.pyplot as plt
 import numpy as np
 import pytorch_lightning as pl
@@ -37,7 +36,6 @@ class GenericVAE(nn.Module):
         super(GenericVAE, self).__init__()
         assert dist_type in ['poisson', 'negbio', 'categorical', 'laplace', 'gaussian']
         self.dist_type = dist_type
-        # self.dist_class = dist_class
         self.latent_dim = latent_dim 
         self.reparam_type = reparam_type
         self.max_count = max_count
@@ -51,7 +49,6 @@ class GenericVAE(nn.Module):
         if dist_type == 'poisson':
             self.prior = nn.Parameter(torch.zeros((1, latent_dim)))
         elif dist_type == 'negbio':
-            print("use {}".format(reparam_type))
             self.dist_class = NegBinomial(
                             reparam_type=reparam_type,
                             max_count=max_count,
@@ -73,7 +70,6 @@ class GenericVAE(nn.Module):
         
     def mse_loss(self, x, y):
         return ((y - x)**2).sum(-1).mean()
-    
 
     def _act_fn(self, z):
         act_fn = {
@@ -100,18 +96,13 @@ class GenericVAE(nn.Module):
 
         elif self.dist_type == "negbio":
             logit_p = self.encode(x).clamp(-5, 5)
-            # r = torch.exp(self.log_r_prior)
-            # p = torch.sigmoid(logit_p)
-            # zrep = r * ((1-p)/(p+1e-10))
-            zrep = logit_p
-            z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)             
+            z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)         
             y = self.decode(z)
-            return self.dist_class, zrep, z, y
+            return self.dist_class, logit_p, z, y
         elif self.dist_type == "categorical":
             logit_p = self.encode(x) 
             self.dist_class = Categorical(logits=logit_p)
             z = self.dist_class.rsample()
-            #z_one_hot = F.one_hot(z, num_classes=self.num_classes).float()
             y = self.decode(z)
             return self.dist_class, logit_p, z, y
         elif self.dist_type == "laplace":
@@ -135,14 +126,15 @@ class GenericVAE(nn.Module):
         
 
     def find_dead_neurons(self, frac: int = 8):
+        # this code is adpated from https://github.com/hadivafaii/PoissonVAE
         norms = tonp(torch.linalg.vector_norm(
-            self.decode.fc_dec.weight, dim=0))  # assumes decoder has `fc_dec`
+            self.decode.fc_dec.weight, dim=0))  
         
         eps = np.finfo(norms.dtype).eps
         norms = np.maximum(norms, eps)
         log_norms = np.log(norms)
 
-        # finds large contiguous gap
+  
         bins = np.linspace(
             start=np.nanmin(log_norms),
             stop=np.nanmax(log_norms),

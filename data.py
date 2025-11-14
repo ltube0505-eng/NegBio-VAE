@@ -2,77 +2,82 @@ import math
 import os
 
 import torch
-from PIL import ImageOps
+from PIL import ImageOps,Image
 from pytorch_lightning import LightningDataModule
-from torch.utils.data import DataLoader, Subset, TensorDataset, random_split
+from torch.utils.data import DataLoader, Subset, TensorDataset, random_split, Dataset, ConcatDataset
 from torchvision import datasets, transforms
 from torchvision.transforms import InterpolationMode
 
 
-class MNISTDataModule(LightningDataModule):
-    def __init__(self, data_dir: str = './Datasets', batch_size: int = 16, num_workers: int = 0):
+class CelebAHQDataset(Dataset):
+    def __init__(self, root, transform=None, subsample_size=None):
         super().__init__()
-        self.data_dir = data_dir
-        self.batch_size = batch_size
-        self.num_workers = num_workers
-        self.transform = transforms.ToTensor()
+        if not os.path.isdir(root):
+            raise ValueError(f"The specified root: {root} does not exist")
+        self.root = root
+        self.transform = transform
 
-    def prepare_data(self):
-        # Download MNIST once
-        datasets.MNIST(self.data_dir, train=True, download=True)
-        datasets.MNIST(self.data_dir, train=False, download=True)
+        self.images = []
+        modes = ["train", "val"]
+        subfolders = ["male", "female"]
 
-    def setup(self, stage=None):
-        # Load datasets
-        full_train = datasets.MNIST(self.data_dir, train=True, transform=self.transform)
-        full_test = datasets.MNIST(self.data_dir, train=False, transform=self.transform)
+        for mode in modes:
+            for folder in subfolders:
+                img_path = os.path.join(self.root, mode, folder)
+                for img in sorted(os.listdir(img_path)):
+                    self.images.append(os.path.join(img_path, img))
 
-        # Randomly sample 100 training examples
-        torch.manual_seed(0)
-        train_idx = torch.randperm(len(full_train))[:200]
-        self.mnist_train = Subset(full_train, train_idx)
+        if subsample_size is not None:
+            self.images = self.images[:subsample_size]
 
-        # Use 25 images for validation
-        val_idx = torch.randperm(len(full_test))[:55]
-        self.mnist_val = Subset(full_test, val_idx)
+    def __getitem__(self, idx):
+        img_path = self.images[idx]
+        img = Image.open(img_path).convert("RGB")  # 保证3通道
+        if self.transform is not None:
+            img = self.transform(img)
+        return img,idx
 
-        # Use full test set
-        test_idx = torch.randperm(len(full_test))[:25]
-        self.mnist_test = Subset(full_test, test_idx)
-        # self.mnist_test = full_test
-        import math
-        self.train_steps_per_epoch = math.ceil(len(self.mnist_train) / self.batch_size)
+    def __len__(self):
+        return len(self.images)
 
-    def train_dataloader(self):
-        return DataLoader(self.mnist_train, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)
+class CropCelebA64(object):
+    """ This class applies cropping for CelebA64. This is a simplified implementation of:
+    https://github.com/andersbll/autoencoding_beyond_pixels/blob/master/dataset/celeba.py
+    """
+    def __call__(self, pic):
+        new_pic = pic.crop((15, 40, 178 - 15, 218 - 30))
+        return new_pic
 
-    def val_dataloader(self):
-        return DataLoader(self.mnist_val, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+    def __repr__(self):
+        return self.__class__.__name__ + '()'
 
-    def test_dataloader(self):
-        return DataLoader(self.mnist_val, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
-    
-
-
-
-
-def get_transform(dataset_name, device, grey=False, augment=False, flatten=True):
+def get_transform(dataset_name, device, grey=False, augment=False, flatten=True, resize=None, crop64=False):
     tf = []
 
     if dataset_name == 'Omniglot':
         tf.append(transforms.Resize(28, interpolation=InterpolationMode.NEAREST))
         tf.append(transforms.Lambda(lambda img: ImageOps.invert(img.convert('L'))))
     if dataset_name == "CIFAR16":
-        tf.append(transforms.Resize(16))
+        tf.append(transforms.Resize(16)) 
+        
+    if dataset_name == "CelebAHQ":
+        tf.append(transforms.Resize(128))
+
+    if crop64:
+        tf.append(CropCelebA64())
+
+    if resize is not None:
+        tf.append(transforms.Resize(resize))
+
     if grey:
         tf.append(transforms.Grayscale())
 
-    if augment and dataset_name in ['CIFAR10', 'CIFAR16']:
+    if augment and dataset_name in ['CIFAR10', 'CIFAR16']:# 'CelebA', 'CelebA64', 'CelebAHQ', 'FFHQ']:
         tf.insert(0, transforms.RandomHorizontalFlip(p=0.5))
 
     tf.append(transforms.ToTensor())
 
-    if dataset_name in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16']:
+    if dataset_name in ['SVHN', 'CIFAR10', 'CelebA','CIFAR16', 'CelebA64', 'CelebAHQ', 'FFHQ']:
         if grey:
             tf.append(transforms.Normalize(mean=[0.5], std=[0.5]))
         else:
@@ -83,6 +88,17 @@ def get_transform(dataset_name, device, grey=False, augment=False, flatten=True)
 
     tf.append(transforms.Lambda(lambda x: x.to(device)))
     return transforms.Compose(tf)
+
+
+
+
+def _data_transforms_celeba64(size):
+    train_transform = transforms.Compose([
+        CropCelebA64(),
+        transforms.Resize(size),
+        transforms.RandomHorizontalFlip(),
+        transforms.ToTensor(),
+    ])
 
 
 class DataModule(LightningDataModule):
@@ -119,7 +135,10 @@ class DataModule(LightningDataModule):
 
     def prepare_data(self):
         name = self.dataset_name.lower()
-        if name == "svhn":
+        if name == "fmnist":
+            datasets.FashionMNIST(root=self.data_dir,train=True,download=True)
+            datasets.FashionMNIST(root=self.data_dir,train=False,download=True)
+        elif name == "svhn":
             print("Prepare SVHN...")
             datasets.SVHN(root=self.data_dir, split='train', download=True)
             datasets.SVHN(root=self.data_dir, split='test', download=True)
@@ -127,6 +146,13 @@ class DataModule(LightningDataModule):
             print("Prepare Omniglot...")
             datasets.Omniglot(root=self.data_dir, background=True, download=True)
             datasets.Omniglot(root=self.data_dir, background=False, download=True)
+        elif name in ["celeba", "celeba64"]:
+            print("Prepare Celeba")
+            datasets.CelebA(root=self.data_dir,split='train',download=False)
+            datasets.CelebA(root=self.data_dir,split='valid',download=False)
+            datasets.CelebA(root=self.data_dir,split='test',download=False)
+        elif name in ["celebahq"]:
+            print("prepare CelebAHQ")
         else:
             if name == "cifar16":
                 self.dataset_name = "CIFAR10"
@@ -135,16 +161,36 @@ class DataModule(LightningDataModule):
             dataset_cls(root=self.data_dir, train=True, download=True)
             dataset_cls(root=self.data_dir, train=False, download=True)
 
-    def setup(self, stage=None):
+    def setup(self, stage=None): # 实例化数据并切分
         name = self.dataset_name
-
         
-        if name == "SVHN":
+        if name == "fmnist":
+            full = datasets.FashionMNIST(root=self.data_dir,train=True,transform=self.transform)
+            self.test_set = datasets.FashionMNIST(root=self.data_dir,train=False,transform=self.transform)
+
+        elif name == "SVHN":
             full = datasets.SVHN(root=self.data_dir, split="train", transform=self.transform)
             self.test_set = datasets.SVHN(root=self.data_dir, split="test", transform=self.transform)
         elif name == "Omniglot":
             full = datasets.Omniglot(root=self.data_dir, background=True, transform=self.transform)
             self.test_set = datasets.Omniglot(root=self.data_dir, background=False, transform=self.transform)
+        elif name == "CelebA64":
+            # train_transform, valid_transform = _data_transforms_celeba64(resize=64)
+            full = datasets.CelebA(root=self.data_dir, split="train",
+                                   transform=get_transform(name, self.device, self.grey, self.augment, self.flatten, resize=64, crop64=True))
+            self.valid_set = datasets.CelebA(root=self.data_dir, split="valid", 
+                                            transform=get_transform(name, self.device, self.grey, False, self.flatten, resize=64, crop64=True))
+            self.test_set = datasets.CelebA(root=self.data_dir, split="test",
+                                            transform=get_transform(name, self.device, self.grey, False, self.flatten, resize=64, crop64=True))
+
+        elif name == "CelebAHQ":
+            full = CelebAHQDataset(root=os.path.join(self.data_dir, "celeba_hq"), transform=self.transform)
+            self.test_set = None
+        elif name == "FFHQ":
+            full = ImageFolder(root=os.path.join(self.data_dir, "ffhq/train"),
+                               transform=get_transform(name, self.device, self.grey, self.augment, self.flatten, resize=256))
+            self.test_set = ImageFolder(root=os.path.join(self.data_dir, "ffhq/test"),
+                                        transform=get_transform(name, self.device, self.grey, False, self.flatten, resize=256))
         else:
             if name == "CIFAR16":
                 dataset_cls = getattr(datasets, "CIFAR10")
@@ -152,7 +198,7 @@ class DataModule(LightningDataModule):
                 dataset_cls = getattr(datasets, name)
             full = dataset_cls(root=self.data_dir, train=True, transform=self.transform)
             self.test_set = dataset_cls(root=self.data_dir, train=False, transform=self.transform)
-        print("Dataset {} is set!".format(name))
+
 
 
         if self.use_subset:
@@ -170,12 +216,19 @@ class DataModule(LightningDataModule):
             train_len = len(full) - val_len
             
             self.train_steps_per_epoch = math.ceil(train_len/ self.batch_size)
+            if name == 'CelebA64':
+                self.train_set, self.val_set = full, self.valid_set
+            elif name == "CelebAHQ":
+                total_len = len(full)
+                train_len = int (0.8 * total_len)
+                val_len = int(0.1 * total_len)
+                test_len = total_len - train_len - val_len
+                self.train_set, self.val_set, self.test_set = random_split(full,[train_len,val_len,test_len], 
+                generator=torch.Generator().manual_seed(42)) 
 
-            self.train_set, self.val_set = random_split(full, [train_len, val_len])
-
-        print("Train set size:", len(self.train_set))
-        print("Val set size:", len(self.val_set))
-        print("Test set size:", len(self.test_set))
+            else:
+                self.train_set, self.val_set = random_split(full, [train_len, val_len],
+                generator=torch.Generator().manual_seed(42))
 
     def train_dataloader(self):
         return DataLoader(self.train_set, batch_size=self.batch_size, shuffle=True, num_workers=self.num_workers)
@@ -185,3 +238,22 @@ class DataModule(LightningDataModule):
 
     def test_dataloader(self):
         return DataLoader(self.test_set, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+    def fid_dataloader(self):
+        if self.dataset_name in ['CIFAR16','CIFAR10']:
+            self.fid_set = ConcatDataset([self.train_set, self.val_set])
+        elif self.dataset_name == 'CelebA64':
+            self.fid_set = ConcatDataset([self.train_set, self.val_set, self.test_set])
+        elif self.dataset_name == 'SVHN':
+            self.fid_set = ConcatDataset([self.train_set, self.val_set])
+        elif self.dataset_name == 'CelebAHQ':
+            self.fid_set = ConcatDataset([self.train_set, self.val_set, self.test_set])
+        elif self.dataset_name == 'MNIST':
+            self.fid_set = ConcatDataset([self.train_set, self.val_set])
+        elif self.dataset_name == 'fmnist':
+            self.fid_set = ConcatDataset([self.train_set, self.val_set])
+        print(len(self.fid_set))
+        return DataLoader(self.fid_set, batch_size=self.batch_size, shuffle=False, num_workers=self.num_workers)
+
+
+
