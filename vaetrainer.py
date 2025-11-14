@@ -426,7 +426,7 @@ class VAETrainer(pl.LightningModule):
             elif self.cfg['dataset']['name'] == 'SVHN':
                 real_imgs = batch[0].view(-1, 3, 32, 32)
                 recon_imgs = y.view(-1, 3, 32, 32)
-            elif self.cfg['dataset']['name'] in ['CelebA', 'CelebA64', 'FFHQ']:  # ✅ 新增
+            elif self.cfg['dataset']['name'] in ['CelebA', 'CelebA64', 'FFHQ']: 
                 real_imgs = batch[0].view(-1, 3, 64, 64)
                 recon_imgs = y.view(-1, 3, 64, 64)
             elif self.cfg['dataset']['name'] in ['CelebAHQ']:
@@ -444,7 +444,7 @@ class VAETrainer(pl.LightningModule):
             elif self.cfg['dataset']['name'] == 'SVHN':
                 real_imgs = batch[0].view(-1, 3, 32, 32)
                 recon_imgs = y.view(-1, 3, 32, 32)
-            elif self.cfg['dataset']['name'] in ['CelebA', 'CelebA64', 'FFHQ']:  # ✅ 新增
+            elif self.cfg['dataset']['name'] in ['CelebA', 'CelebA64', 'FFHQ']: 
                 real_imgs = batch[0].view(-1, 3, 64, 64)
                 recon_imgs = y.view(-1,3,64,64)
             elif self.cfg['dataset']['name'] in ['CelebAHQ']:
