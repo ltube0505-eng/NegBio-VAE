@@ -19,7 +19,7 @@ def build_encoder(cfg):
     latent_dim = (
             base_latent_dim * 2 
             if dist_type in ['laplace', 'gaussian']
-            or (dist_type == 'negbio' and kl_type == 'mc')
+            or (dist_type == 'negbio' and kl_type in ['mc', 'cch'])
             else base_latent_dim
         )
 

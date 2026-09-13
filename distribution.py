@@ -50,9 +50,13 @@ class Poisson:
 class GammaSampler:
     def __init__(self, 
                  t=0.0,
-                 num_samples = 5):
+                 num_samples=5,
+                 cts_max_count=None):
         self.t = t
         self.num_samples = num_samples
+        if cts_max_count is not None and cts_max_count < 1:
+            raise ValueError("cts_max_count must be a positive integer")
+        self.cts_max_count = cts_max_count
 
     def __call__(self, 
                  log_r,
@@ -62,24 +66,29 @@ class GammaSampler:
 
     @property
     def mean(self):
-        return self.r * (1 - self.p) / self.p
+        return self.r / self.gamma_rate
 
     @property
     def variance(self):
-        return self.r * (1 - self.p) / (self.p ** 2)
+        return self.r * (1.0 + self.gamma_rate) / self.gamma_rate.pow(2)
 
 
     def rsample(self, log_r, logit_p, hard=False):
         self.r = torch.exp(log_r.clamp(None, 5)) + 1e-6
         self.p = torch.sigmoid(logit_p.clamp(-5, 5))
 
-        gamma_rate = self.p / (1 - self.p + 1e-8)                  
-        lam = torch.distributions.Gamma(self.r, gamma_rate).rsample() + 1e-6
+        # logit(p) is exactly log(p / (1 - p)), i.e. the log Gamma rate.
+        self.gamma_rate = torch.exp(logit_p.clamp(-5, 5))
+        lam = torch.distributions.Gamma(self.r, self.gamma_rate).rsample() + 1e-6
 
-        n_trials = min(int(math.ceil(max(lam.max().item(), 1) * 5)), 826)
+        if self.cts_max_count is None:
+            n_trials = min(int(math.ceil(max(lam.max().item(), 1) * 5)), 826)
+        else:
+            n_trials = self.cts_max_count
         x = torch.distributions.Exponential(lam).rsample((n_trials,))
 
         times = torch.cumsum(x, dim=0)
+        self.last_truncation_rate = (times[-1] < 1.0).float().mean().detach()
         indicator = times < 1.0
         if not (hard or self.t == 0):
             indicator = torch.sigmoid((1.0 - times) / self.t)
@@ -124,12 +133,17 @@ class NegBinomial(nn.Module):
                  reparam_type="gamma", 
                  max_count=15, 
                  tau=1.0,
-                 num_samples = 5):
+                 num_samples=5,
+                 cts_max_count=None):
         super().__init__()
         self.reparam_type = reparam_type
         self.num_samples = num_samples
         if reparam_type == "gamma":
-            self.strategy = GammaSampler(t=tau, num_samples=self.num_samples)
+            self.strategy = GammaSampler(
+                t=tau,
+                num_samples=self.num_samples,
+                cts_max_count=cts_max_count,
+            )
         elif reparam_type == "gumbel":
             self.strategy = GumbelSampler(max_count=max_count, tau=tau, num_samples=self.num_samples)
         else:
@@ -191,6 +205,63 @@ class NegBinomial(nn.Module):
         log_q = self._log_prob(samples, log_r_post, logit_p_post)
         log_p = self._log_prob(samples, log_r_prior, logit_p_prior)
         return (log_q - log_p).mean(dim=0)
+
+    @staticmethod
+    def gamma_kl(alpha_q, beta_q, alpha_p, beta_p):
+        """Elementwise KL(Gamma(alpha_q, beta_q) || Gamma(alpha_p, beta_p)).
+
+        ``beta_q`` and ``beta_p`` use the rate (not scale) convention.
+        """
+        return (
+            (alpha_q - alpha_p) * torch.digamma(alpha_q)
+            - torch.lgamma(alpha_q)
+            + torch.lgamma(alpha_p)
+            + alpha_p * (torch.log(beta_q) - torch.log(beta_p))
+            + alpha_q * (beta_p / beta_q - 1.0)
+        )
+
+    def kl_cch(self,
+               log_alpha_prior,
+               log_beta_prior,
+               log_alpha_post,
+               log_beta_post,
+               z_tilde,
+               detach_phi=False,
+               return_components=False):
+        """Conjugate-corrected KL using the CTS sample used by the decoder.
+
+        The correction is
+
+            KL_Gamma(q || p) - KL_Gamma(q(lambda | z) || p(lambda | z)),
+
+        where the second term uses the conjugate ContPoisson posterior form.
+        This is the CCH approximation for CTS samples and converges to the
+        discrete negative-binomial KL in the low-temperature/count limit.
+        """
+        alpha_p = torch.exp(log_alpha_prior.clamp(max=5)).clamp_min(1e-3)
+        beta_p = torch.exp(log_beta_prior.clamp(-5, 5)).clamp_min(1e-3)
+        alpha_q = torch.exp(log_alpha_post.clamp(max=5)).clamp_min(1e-3)
+        beta_q = torch.exp(log_beta_post.clamp(-5, 5)).clamp_min(1e-3)
+
+        kl_gamma = self.gamma_kl(alpha_q, beta_q, alpha_p, beta_p)
+        t = z_tilde.detach() if detach_phi else z_tilde
+        t = t.clamp_min(0.0)
+        phi = self.gamma_kl(
+            t + alpha_q,
+            beta_q + 1.0,
+            t + alpha_p,
+            beta_p + 1.0,
+        )
+        unclamped = kl_gamma - phi
+        kl = unclamped.clamp_min(0.0)
+
+        if return_components:
+            return kl, {
+                "kl_gamma": kl_gamma,
+                "phi": phi,
+                "unclamped": unclamped,
+            }
+        return kl
     
 
 class Categorical(RelaxedOneHotCategorical):

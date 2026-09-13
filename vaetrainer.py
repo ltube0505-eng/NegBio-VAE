@@ -39,7 +39,8 @@ class VAETrainer(pl.LightningModule):
                 tau = cfg['model']['tau'],
                 latent_act= cfg['model']['latent_act'],
                 num_samples = cfg['model']['num_samples'],
-                kl_type = cfg['model']['kl']
+                kl_type = cfg['model']['kl'],
+                cts_max_count = cfg['model'].get('cts_max_count', 64),
             )
 
         self.log_images = self.cfg.get('eval', {}).get('log_images', True)
@@ -50,6 +51,7 @@ class VAETrainer(pl.LightningModule):
 
         self.beta = self.cfg['model']['beta']
         self.kl_annealing = self.cfg['model']['kl_annealing']
+        self.cch_detach_phi = self.cfg['model'].get('cch_detach_phi', False)
         self.train_length = None
 
 
@@ -84,13 +86,51 @@ class VAETrainer(pl.LightningModule):
         else:
             return self.model(x[0])
 
+    def _negative_binomial_kl(self, log_r_post, logit_p_post, z,
+                              return_components=False):
+        kl_type = self.cfg['model']['kl']
+        if kl_type == "mc":
+            kl = self.model.dist_class.kl_mc(
+                self.model.log_r_prior,
+                self.model.logit_p_prior,
+                log_r_post,
+                logit_p_post,
+            )
+            return (kl, None) if return_components else kl
+        if kl_type == "cch":
+            return self.model.dist_class.kl_cch(
+                self.model.log_r_prior,
+                self.model.logit_p_prior,
+                log_r_post,
+                logit_p_post,
+                z,
+                detach_phi=self.cch_detach_phi,
+                return_components=return_components,
+            )
+        kl = self.model.dist_class.kl(
+            self.model.log_r_prior,
+            self.model.logit_p_prior,
+            logit_p_post,
+        )
+        return (kl, None) if return_components else kl
+
+    def _reduce_kl(self, kl_diag):
+        if self.cfg['model']['kl'] == "cch":
+            return kl_diag.flatten(1).sum(dim=1).mean()
+        return kl_diag.mean()
+
     def training_step(self, batch, batch_idx):
         x = batch[0].view(batch[0].size(0), -1)
 
         epoch = self.current_epoch + batch_idx/self.train_length
         if self.kl_annealing:
             self.beta =  min(1.0, 5*epoch/250) 
-        self.model.t = max((1.0 - 0.95*epoch/250), 0.05) 
+        if self.cfg['model']['kl'] == "cch":
+            # CCH accuracy relies on a low CTS temperature. Do not overwrite
+            # the configured value with the legacy 1.0 -> 0.05 schedule.
+            self.model.t = self.model.tau
+        else:
+            self.model.t = max((1.0 - 0.95*epoch/250), 0.05)
         self.log('beta', self.beta)
         self.log('t', self.model.t)
 
@@ -99,18 +139,22 @@ class VAETrainer(pl.LightningModule):
             kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
             dist, (log_r_post, logit_p), z, y = self(batch)
-            if self.cfg['model']['kl'] == "mc":
-                kl =  self.model.dist_class.kl_mc(self.model.log_r_prior,
-                                          self.model.logit_p_prior,
-                                          log_r_post,
-                                          logit_p
-                                        ).mean()
-
-            else:
-                kl = self.model.dist_class.kl(self.model.log_r_prior,
-                                          self.model.logit_p_prior,
-                                          logit_p
-                                        ).mean()
+            kl_diag, cch_components = self._negative_binomial_kl(
+                log_r_post, logit_p, z, return_components=True
+            )
+            kl = self._reduce_kl(kl_diag)
+            if cch_components is not None:
+                kl_gamma = cch_components['kl_gamma'].mean()
+                phi = cch_components['phi'].mean()
+                phi_ratio = phi / kl_gamma.clamp_min(1e-8)
+                clamp_rate = (cch_components['unclamped'] < 0).float().mean()
+                truncation_rate = self.model.dist_class.strategy.last_truncation_rate
+                self.log('cch_kl_gamma', kl_gamma, on_step=True, on_epoch=True)
+                self.log('cch_phi', phi, on_step=True, on_epoch=True)
+                self.log('cch_phi_ratio', phi_ratio, on_step=True, on_epoch=True)
+                self.log('cch_clamp_rate', clamp_rate, on_step=True, on_epoch=True)
+                self.log('cch_cts_truncation_rate', truncation_rate,
+                         on_step=True, on_epoch=True)
 
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
@@ -155,18 +199,7 @@ class VAETrainer(pl.LightningModule):
             kl_diag = dist.kl(self.model.prior, du)
         elif self.model_name == "negbio":
             dist, (log_r_post, logit_p), z, y = self(batch)
-            if self.cfg['model']['kl'] == "mc":
-                kl_diag =  self.model.dist_class.kl_mc(self.model.log_r_prior,
-                                          self.model.logit_p_prior,
-                                          log_r_post,
-                                          logit_p
-                                        )
-            else:
-                kl_diag = self.model.dist_class.kl(
-                    self.model.log_r_prior,
-                    self.model.logit_p_prior,
-                    logit_p
-                    )
+            kl_diag = self._negative_binomial_kl(log_r_post, logit_p, z)
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl_diag = self.model.dist_class.comput_kl(logit_p)
@@ -177,7 +210,7 @@ class VAETrainer(pl.LightningModule):
             dist, (loc, log_scale), z, y = self(batch)
             kl_diag = dist.kl()
 
-        kl = kl_diag.mean()
+        kl = self._reduce_kl(kl_diag)
         if self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 x = x.view(-1, 1, 28, 28)
@@ -374,20 +407,12 @@ class VAETrainer(pl.LightningModule):
             kl_diag = dist.kl(self.model.prior, du)
         elif self.model_name == "negbio":
             dist, (log_r_post, logit_p), z, y = self(batch)
-            z_repr = logit_p
-            if self.cfg['model']['kl'] == "mc":
-                kl_diag = self.model.dist_class.kl_mc(
-                    self.model.log_r_prior,
-                    self.model.logit_p_prior,
-                    log_r_post,
-                    logit_p
-                )
+            if self.cfg['model']['kl'] == "cch":
+                # Posterior Gamma/CTS mean alpha_q / beta_q is a D-vector.
+                z_repr = torch.exp((log_r_post - logit_p).clamp(-10, 10))
             else:
-                kl_diag = self.model.dist_class.kl(
-                    self.model.log_r_prior,
-                    self.model.logit_p_prior,
-                    logit_p
-                )
+                z_repr = logit_p
+            kl_diag = self._negative_binomial_kl(log_r_post, logit_p, z)
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             z_repr = logit_p
@@ -579,6 +604,3 @@ class VAETrainer(pl.LightningModule):
             log_dict["final_mse"] = mse_mean
         if self.logger is not None:
             self.logger.experiment.log(log_dict)
-
-
-
