@@ -16,7 +16,7 @@ warnings.filterwarnings("ignore")
 FLAGS = flags.FLAGS
 flags.DEFINE_string("config_path", "configs/train_config.yaml", "Path to training config YAML file")
 flags.DEFINE_string("reparam_type", "gumbel", "Model type: gamma or gumbel")
-flags.DEFINE_string("kl", "gamma", "type: mc or analytical")
+flags.DEFINE_string("kl", "gamma", "type: mc, analytical, or cch")
 flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson, laplace, gaussian or categorical")
 flags.DEFINE_string("dataset", "MNIST", "CIFAR16 or MNIST Omniglot svhn") 
 flags.DEFINE_string("enc_type", "conv", "Choice of [linear, conv, mlp]")
@@ -29,6 +29,9 @@ flags.DEFINE_string("clf_type", "logreg", "Choice of [knn, logreg, svm]")
 flags.DEFINE_bool("save_files", False, "if save npy files or not, default false")
 flags.DEFINE_integer("mc_sample", 5, "# of samples for kl mc")
 flags.DEFINE_float("tau", 1.0, "temperature")
+flags.DEFINE_float("cch_tau", 0.1, "CCH CTS temperature (recommended: 0.05-0.2)")
+flags.DEFINE_integer("cts_max_count", 64, "CCH CTS truncation M")
+flags.DEFINE_bool("cch_detach_phi", False, "Detach reused CTS sample in CCH correction")
 flags.DEFINE_bool('kl_annealing', True, "kl annealing")  # in command line use --kl_annealing=False to stop auto kl annealing
 flags.DEFINE_float('beta', 0.0, 'beta for kl')
 
@@ -56,7 +59,9 @@ def main(argv):
             ('decoder', 'type'): flags.dec_type,
             ('model', 'beta'): flags.beta,
             ('model', 'kl_annealing'): flags.kl_annealing,
-            ('model', 'tau'): flags.tau,
+            ('model', 'tau'): flags.cch_tau if flags.kl == 'cch' else flags.tau,
+            ('model', 'cts_max_count'): flags.cts_max_count,
+            ('model', 'cch_detach_phi'): flags.cch_detach_phi,
         }
         
         for (section, key), value in update_map.items():

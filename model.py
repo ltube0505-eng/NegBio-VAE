@@ -32,6 +32,7 @@ class GenericVAE(nn.Module):
                  latent_act = "sigmoid",
                  num_samples = 5,
                  kl_type = "analytical",
+                 cts_max_count = 64,
                  **kwargs
                  ):
         super(GenericVAE, self).__init__()
@@ -42,11 +43,15 @@ class GenericVAE(nn.Module):
         self.max_count = max_count
         self.tau = tau
         self.kl_type = kl_type
+        if self.kl_type == "cch" and self.dist_type != "negbio":
+            raise ValueError("CCH KL is only defined for dist_type='negbio'.")
+        if self.kl_type == "cch" and self.reparam_type != "gamma":
+            raise ValueError("CCH KL requires reparam_type='gamma' (CTS sampling).")
         
         self.encode = encoder 
         self.decode = decoder 
         self.latent_act = latent_act
-        self.t = 1.0
+        self.t = tau if self.kl_type == "cch" else 1.0
 
         if dist_type == 'poisson':
             self.prior = nn.Parameter(torch.zeros((1, latent_dim)))
@@ -55,7 +60,8 @@ class GenericVAE(nn.Module):
                             reparam_type=reparam_type,
                             max_count=max_count,
                             tau=tau,
-                            num_samples=num_samples
+                            num_samples=num_samples,
+                            cts_max_count=(cts_max_count if kl_type == "cch" else None),
                         )
             self.log_r_prior = nn.Parameter(torch.zeros((1, latent_dim)))
             self.logit_p_prior = nn.Parameter(torch.zeros((1, latent_dim)))
@@ -98,9 +104,24 @@ class GenericVAE(nn.Module):
 
         elif self.dist_type == "negbio":
             encoded = self.encode(x)
-            if self.kl_type == "mc":
+            if self.kl_type == "cch":
+                raw_delta_alpha, raw_delta_beta = encoded.chunk(2, dim=-1)
+                # Normalized softplus keeps residuals positive and maps a
+                # zero encoder output to the neutral residual delta=1.
+                delta_alpha = (
+                    F.softplus(raw_delta_alpha) / math.log(2.0)
+                ).clamp(1e-3, math.exp(5.0))
+                delta_beta = (
+                    F.softplus(raw_delta_beta) / math.log(2.0)
+                ).clamp(1e-3, math.exp(5.0))
+                log_r_post = self.log_r_prior + torch.log(delta_alpha)
+                # logit_p_prior is also log(beta_p), because
+                # beta=p/(1-p). Hence beta_q=beta_p/delta_beta.
+                logit_p = self.logit_p_prior - torch.log(delta_beta)
+                log_r_post = log_r_post.clamp(math.log(1e-3), 5.0)
+            elif self.kl_type == "mc":
                 log_delta_r, logit_p = encoded.chunk(2, dim=-1)
-                # Paper parameterization: r_q(x) = r_p * delta_r(x).
+                # Paper parameterization: r_q = r_p * delta_r.
                 log_r_post = self.log_r_prior + log_delta_r.clamp(-5, 5)
             else:
                 # Dispersion sharing: r_q(x) = r_p.
@@ -108,7 +129,10 @@ class GenericVAE(nn.Module):
                 log_r_post = self.log_r_prior.expand_as(logit_p)
 
             logit_p = logit_p.clamp(-5, 5)
-            z = self.dist_class.rsample(log_r_post, logit_p, self.t, hard=validation)
+            # CCH defines the relaxed CTS variable as the model latent, so the
+            # same soft sample is used for reconstruction and KL correction.
+            hard = validation and self.kl_type != "cch"
+            z = self.dist_class.rsample(log_r_post, logit_p, self.t, hard=hard)
             y = self.decode(z)
             return self.dist_class, (log_r_post, logit_p), z, y
         elif self.dist_type == "categorical":
@@ -135,6 +159,18 @@ class GenericVAE(nn.Module):
             return dist, (loc, log_scale), z, y
         else:
             raise NotImplementedError
+
+    def sample_negative_binomial_prior(self, num_samples, hard=False):
+        """Sample and decode the NB prior using the model's own latent kernel."""
+        if self.dist_type != "negbio":
+            raise ValueError("Prior NB sampling requires dist_type='negbio'.")
+        log_r = self.log_r_prior.expand(num_samples, -1)
+        logit_p = self.logit_p_prior.expand(num_samples, -1)
+        if self.kl_type == "cch":
+            # The CCH generative model uses the same soft CTS kernel as q.
+            hard = False
+        z = self.dist_class.rsample(log_r, logit_p, self.t, hard=hard)
+        return z, self.decode(z)
         
 
     def find_dead_neurons(self, frac: int = 8):
@@ -182,10 +218,6 @@ class GenericVAE(nn.Module):
      
      
     
-
-
-
-
 
 
 

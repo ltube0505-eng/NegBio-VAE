@@ -1,0 +1,80 @@
+dataset:
+  name:
+
+model:
+  name: "negbio"
+  latent_dim: 256
+  reparam_type: "gamma"
+  max_count: 5
+  tau: 0.1
+  kl: "cch"
+  latent_act: "sigmoid"
+  num_samples: 5
+  cts_max_count: 64
+  cch_detach_phi: false
+  beta: 0
+  kl_annealing: true
+
+encoder:
+  type: "conv"
+  input_dim:
+    MNIST: 784
+    fmnist: 784
+    CIFAR16: 768
+    Omniglot: 28
+    SVHN: 3072
+    CelebA64: 12288
+    CelebAHQ: 49152
+  latent_dim: 256
+  use_norm: true
+  bias: true
+  activation_fn: "swish"
+  use_bn: false
+  use_se: true
+  res_eps: 1.0
+  enc_norm: true
+  enc_bias: true
+
+decoder:
+  type: "conv"
+  output_dim: 784
+  latent_dim: 256
+  out_channel:
+    MNIST: 1
+    fmnist: 1
+    CIFAR16: 3
+    Omniglot: 1
+    SVHN: 3
+    CelebA64: 3
+    CelebAHQ: 3
+  size:
+    MNIST: 7
+    fmnist: 7
+    CIFAR16: 4
+    Omniglot: 7
+    SVHN: 8
+    CelebA64: 16
+    CelebAHQ: 32
+
+optimizer:
+  name: "adam"
+  lr: 0.001
+  weight_decay: 0.0
+
+trainer:
+  beta_max: 1.0
+  schedule_epochs: 300
+  max_epochs: 100
+  gpus: 1
+
+eval:
+  fid_feature: 2048
+  log_images: false
+
+logging:
+  use_wandb: false
+  wandb_project: "cch-vae-experiments"
+  log_images: true
+  save_checkpoints: true
+  monitor: "val_elbo"
+  save_files: false
