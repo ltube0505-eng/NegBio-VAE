@@ -1,0 +1,88 @@
+dataset:
+  name: MNIST
+
+model:
+  name: hnb
+  # HNB uses a spatial latent hierarchy; latent_dim is retained only for
+  # compatibility with filenames produced by the existing evaluation code.
+  latent_dim: 128
+  reparam_type: gamma
+  kl: cch                 # cch, gamma (Gamma-overlapping), or mc
+  tau: 0.1
+  max_count: 30
+  num_samples: 5
+  cts_max_count: 64
+  cch_detach_phi: false
+  gamma_rate_scale: 5.0
+
+  # Ordered from the top/coarsest scale to the bottom/finest scale.
+  groups_per_scale: [4, 4]
+  channels_per_scale: [64, 32]
+  latent_channels_per_scale: [16, 16]
+  spatial_sizes:             # null derives [7, 14] for 28x28 MNIST
+  kl_balance: uniform        # uniform or scale
+  free_bits: 0.0
+
+  beta: 1.0
+  kl_annealing: true
+  latent_act: sigmoid
+
+# Kept for compatibility with DataModule and shared evaluation utilities.
+# HNB builds its own bottom-up encoder and top-down decoder.
+encoder:
+  type: conv
+  input_dim:
+    MNIST: 784
+    fmnist: 784
+    CIFAR16: 768
+    Omniglot: 784
+    SVHN: 3072
+    CelebA64: 12288
+    CelebAHQ: 49152
+  latent_dim: 128
+  use_norm: true
+  bias: true
+
+decoder:
+  type: conv
+  output_dim: 784
+  latent_dim: 128
+  out_channel:
+    MNIST: 1
+    fmnist: 1
+    CIFAR16: 3
+    Omniglot: 1
+    SVHN: 3
+    CelebA64: 3
+    CelebAHQ: 3
+  size:
+    MNIST: 7
+    fmnist: 7
+    CIFAR16: 4
+    Omniglot: 7
+    SVHN: 8
+    CelebA64: 16
+    CelebAHQ: 32
+
+optimizer:
+  name: adam
+  lr: 0.001
+  weight_decay: 0.0
+
+trainer:
+  beta_max: 1.0
+  schedule_epochs: 50
+  max_epochs: 300
+  gpus: 1
+
+eval:
+  fid_feature: 2048
+  log_images: false
+
+logging:
+  use_wandb: false
+  wandb_project: hnb-vae-experiments
+  log_images: true
+  save_checkpoints: true
+  monitor: val_elbo
+  save_files: false

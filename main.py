@@ -18,9 +18,9 @@ os.environ['CUDA_VISIBLE_DEVICES'] =GPU
 
 FLAGS = flags.FLAGS
 flags.DEFINE_string("config_path", "configs/train_config.yaml", "Path to training config YAML file")
-flags.DEFINE_string("reparam_type", "gumbel", "Model type: gamma or gumbel")
-flags.DEFINE_string("kl", "gamma", "type: mc, analytical, or cch")
-flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson, laplace, gaussian or categorical")
+flags.DEFINE_string("reparam_type", "gumbel", "Reparameterization: gamma or gumbel")
+flags.DEFINE_string("kl", "gamma", "KL type: gamma, mc, analytical, or cch")
+flags.DEFINE_string("model_type", "negbio", "Model type: hnb, negbio, poisson, laplace, gaussian or categorical")
 flags.DEFINE_string("dataset", "MNIST", "CIFAR16 or MNIST Omniglot svhn") 
 flags.DEFINE_string("enc_type", "conv", "Choice of [linear, conv, mlp]")
 flags.DEFINE_string("dec_type", "conv", "Choice of [linear, conv, mlp]")
@@ -35,6 +35,13 @@ flags.DEFINE_float("tau", 1.0, "temperature")
 flags.DEFINE_float("cch_tau", 0.1, "CCH CTS temperature (recommended: 0.05-0.2)")
 flags.DEFINE_integer("cts_max_count", 64, "CCH CTS truncation M")
 flags.DEFINE_bool("cch_detach_phi", False, "Detach reused CTS sample in CCH correction")
+flags.DEFINE_string("hnb_groups_per_scale", "4,4", "HNB groups at each scale, top to bottom")
+flags.DEFINE_string("hnb_channels_per_scale", "64,32", "HNB TD channels at each scale")
+flags.DEFINE_string("hnb_latent_channels_per_scale", "16,16", "HNB latent channels at each scale")
+flags.DEFINE_string("hnb_spatial_sizes", "", "Optional HNB spatial sizes, e.g. 7,14")
+flags.DEFINE_float("hnb_gamma_rate_scale", 5.0, "Gamma-overlapping rate multiplier")
+flags.DEFINE_float("hnb_free_bits", 0.0, "Free bits per HNB latent group")
+flags.DEFINE_enum("hnb_kl_balance", "uniform", ["uniform", "scale"], "HNB group KL weighting")
 flags.DEFINE_bool('kl_annealing', True, "kl annealing")  # in command line use --kl_annealing=False to stop auto kl annealing
 flags.DEFINE_float('beta', 0.0, 'beta for kl')
 
@@ -50,6 +57,9 @@ def main(argv):
             cfg = yaml.safe_load(f) 
 
     def update_cfg_from_flags(cfg, flags):
+        def int_list(value):
+            return [int(item.strip()) for item in value.split(',') if item.strip()]
+
         update_map = {
             ('model', 'reparam_type'): flags.reparam_type,
             ('dataset', 'name'): flags.dataset,
@@ -67,6 +77,16 @@ def main(argv):
             ('model', 'tau'): flags.cch_tau if flags.kl == 'cch' else flags.tau,
             ('model', 'cts_max_count'): flags.cts_max_count,
             ('model', 'cch_detach_phi'): flags.cch_detach_phi,
+            ('model', 'groups_per_scale'): int_list(flags.hnb_groups_per_scale),
+            ('model', 'channels_per_scale'): int_list(flags.hnb_channels_per_scale),
+            ('model', 'latent_channels_per_scale'): int_list(flags.hnb_latent_channels_per_scale),
+            ('model', 'spatial_sizes'): (
+                int_list(flags.hnb_spatial_sizes)
+                if flags.hnb_spatial_sizes.strip() else None
+            ),
+            ('model', 'gamma_rate_scale'): flags.hnb_gamma_rate_scale,
+            ('model', 'free_bits'): flags.hnb_free_bits,
+            ('model', 'kl_balance'): flags.hnb_kl_balance,
         }
 
         for (section, key), value in update_map.items():
@@ -81,7 +101,7 @@ def main(argv):
     checkpoint_dir = os.path.join(root_dir, name)
     os.makedirs(checkpoint_dir, exist_ok=True) 
     
-    if cfg['encoder']['type'] == "conv":
+    if FLAGS.model_type == "hnb" or cfg['encoder']['type'] == "conv":
         flatten_flag = False
     else:
         flatten_flag = True

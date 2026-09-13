@@ -1,0 +1,98 @@
+import unittest
+
+import torch
+
+from hnb_model import HNBVAE
+
+
+class HNBModelTest(unittest.TestCase):
+    def _model(self, kl_type="gamma"):
+        return HNBVAE(
+            input_channels=1,
+            image_size=16,
+            groups_per_scale=[1, 2],
+            channels_per_scale=[16, 8],
+            latent_channels_per_scale=[4, 3],
+            kl_type=kl_type,
+            reparam_type="gamma",
+            tau=0.1,
+            cts_max_count=16,
+            spatial_sizes=[4, 8],
+        )
+
+    def test_multiscale_forward_shapes_and_neutral_posterior(self):
+        model = self._model("gamma")
+        x = torch.rand(2, 1, 16, 16)
+
+        output = model(x)
+
+        self.assertEqual(output.reconstruction.shape, x.shape)
+        self.assertEqual(len(output.latents), 3)
+        self.assertEqual(output.latents[0].shape, (2, 4, 4, 4))
+        self.assertEqual(output.latents[1].shape, (2, 3, 8, 8))
+        self.assertEqual(output.latents[2].shape, (2, 3, 8, 8))
+        self.assertEqual(output.latent.shape, (2, 10))
+        self.assertEqual(output.representation.shape, (2, 10))
+        self.assertEqual(output.kl_diag.shape, (2, 10))
+        self.assertEqual(output.kl_per_group.shape, (2, 3))
+        self.assertEqual(output.total_kl.shape, (2,))
+        self.assertLess(output.total_kl.abs().max().item(), 1e-4)
+
+        for params in output.parameters:
+            torch.testing.assert_close(params["alpha_q"], params["alpha_p"])
+            torch.testing.assert_close(params["beta_q"], params["beta_p"])
+
+    def test_forward_backward_has_finite_gradients(self):
+        model = self._model("cch")
+        x = torch.rand(2, 1, 16, 16)
+
+        output = model(x)
+        loss = model.mse_loss(x, output.reconstruction) + output.total_kl.mean()
+        loss.backward()
+
+        self.assertTrue(torch.isfinite(loss))
+        gradients = [
+            parameter.grad for parameter in model.parameters()
+            if parameter.grad is not None
+        ]
+        self.assertTrue(gradients)
+        self.assertTrue(all(torch.isfinite(grad).all() for grad in gradients))
+        self.assertIn("kl_gamma", output.diagnostics)
+        self.assertIn("phi", output.diagnostics)
+        self.assertIn("truncation_rate", output.diagnostics)
+        self.assertTrue(any(
+            ((latent % 1.0) != 0).any().item()
+            for latent in output.latents
+        ))
+
+    def test_prior_generation_runs_top_down_without_encoder(self):
+        model = self._model("gamma")
+
+        latent, samples = model.sample_prior(3)
+
+        self.assertEqual(latent.shape, (3, 10))
+        self.assertEqual(samples.shape, (3, 1, 16, 16))
+        self.assertTrue(torch.isfinite(latent).all())
+        self.assertTrue(torch.isfinite(samples).all())
+
+    def test_ladder_warmup_activates_groups_from_top_to_bottom(self):
+        model = self._model("gamma")
+        group_kl = torch.ones(2, 3)
+
+        at_start = model.training_kl(group_kl, warmup_progress=0.0)
+        after_first_group = model.training_kl(
+            group_kl, warmup_progress=1.0 / 3.0
+        )
+        at_end = model.training_kl(group_kl, warmup_progress=1.0)
+
+        torch.testing.assert_close(at_start, torch.zeros(2))
+        torch.testing.assert_close(after_first_group, torch.ones(2))
+        torch.testing.assert_close(at_end, torch.full((2,), 3.0))
+
+    def test_analytical_nb_kl_is_rejected_for_unshared_dispersion(self):
+        with self.assertRaisesRegex(ValueError, "changes both r and p"):
+            self._model("analytical")
+
+
+if __name__ == "__main__":
+    unittest.main()

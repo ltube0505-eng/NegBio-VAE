@@ -13,6 +13,7 @@ from clf_analysis import train_clf_analysis
 warnings.filterwarnings("ignore")
 import wandb as wdb
 from model import GenericVAE
+from hnb_model import HNBVAE
 from utils import (_select_and_stack, build_decoder, build_encoder,
                    compute_inception_score, find_last_contiguous_zeros,
                    get_overdispersion_index)
@@ -22,14 +23,15 @@ class VAETrainer(pl.LightningModule):
     def __init__(self, cfg, **args):
         super(VAETrainer, self).__init__()
         self.cfg = cfg
-        encoder = build_encoder(cfg)
-        decoder = build_decoder(cfg)
-
         self.model_name = cfg['model']['name']
         base_latent_dim = cfg['model']['latent_dim']
 
-
-        self.model = GenericVAE(
+        if self.model_name == "hnb":
+            self.model = HNBVAE.from_config(cfg)
+        else:
+            encoder = build_encoder(cfg)
+            decoder = build_decoder(cfg)
+            self.model = GenericVAE(
                 encoder=encoder,
                 decoder=decoder,
                 latent_dim=base_latent_dim,
@@ -81,6 +83,8 @@ class VAETrainer(pl.LightningModule):
 
 
     def forward(self, x):
+        if self.model_name == "hnb":
+            return self.model(x[0])
         if self.cfg['encoder']['type']=="linear":
             return self.model(x[0].flatten(1))
         else:
@@ -115,7 +119,7 @@ class VAETrainer(pl.LightningModule):
         return (kl, None) if return_components else kl
 
     def _reduce_kl(self, kl_diag):
-        if self.cfg['model']['kl'] == "cch":
+        if self.model_name == "hnb" or self.cfg['model']['kl'] == "cch":
             return kl_diag.flatten(1).sum(dim=1).mean()
         return kl_diag.mean()
 
@@ -123,16 +127,38 @@ class VAETrainer(pl.LightningModule):
         x = batch[0].view(batch[0].size(0), -1)
 
         epoch = self.current_epoch + batch_idx/self.train_length
-        if self.kl_annealing:
+        if self.model_name == "hnb":
+            schedule_epochs = max(
+                float(self.cfg.get('trainer', {}).get('schedule_epochs', 50)),
+                1.0,
+            )
+            hnb_kl_progress = (
+                min(1.0, epoch / schedule_epochs)
+                if self.kl_annealing else None
+            )
+            if self.kl_annealing:
+                self.beta = float(
+                    self.cfg.get('trainer', {}).get('beta_max', 1.0)
+                )
+            else:
+                self.beta = float(self.cfg['model'].get('beta', 1.0))
+        elif self.kl_annealing:
             self.beta =  min(1.0, 5*epoch/250) 
-        if self.cfg['model']['kl'] == "cch":
+        if self.model_name == "hnb":
+            # CCH stays at its configured low temperature. The MC baseline
+            # can still use the legacy annealed relaxation temperature.
+            if self.cfg['model']['kl'] == "cch":
+                self.model.set_temperature(self.cfg['model']['tau'])
+            elif self.cfg['model']['kl'] == "mc":
+                self.model.set_temperature(max((1.0 - 0.95*epoch/250), 0.05))
+        elif self.cfg['model']['kl'] == "cch":
             # CCH accuracy relies on a low CTS temperature. Do not overwrite
             # the configured value with the legacy 1.0 -> 0.05 schedule.
             self.model.t = self.model.tau
         else:
             self.model.t = max((1.0 - 0.95*epoch/250), 0.05)
         self.log('beta', self.beta)
-        self.log('t', self.model.t)
+        self.log('t', self.model.tau if self.model_name == "hnb" else self.model.t)
 
         if self.model_name == "poisson":
             dist, du, z, y = self(batch)
@@ -156,6 +182,37 @@ class VAETrainer(pl.LightningModule):
                 self.log('cch_cts_truncation_rate', truncation_rate,
                          on_step=True, on_epoch=True)
 
+        elif self.model_name == "hnb":
+            output = self(batch)
+            z, y = output.latent, output.reconstruction
+            kl = self.model.training_kl(
+                output.kl_per_group, hnb_kl_progress
+            ).mean()
+            for group_idx, group_kl in enumerate(
+                    output.kl_per_group.mean(dim=0)):
+                self.log(
+                    f'hnb_kl_group_{group_idx}', group_kl,
+                    on_step=False, on_epoch=True
+                )
+            if output.diagnostics:
+                if 'kl_gamma' in output.diagnostics:
+                    kl_gamma = output.diagnostics['kl_gamma'].mean()
+                    phi = output.diagnostics['phi'].mean()
+                    unclamped = output.diagnostics['unclamped']
+                    self.log('cch_kl_gamma', kl_gamma,
+                             on_step=True, on_epoch=True)
+                    self.log('cch_phi', phi, on_step=True, on_epoch=True)
+                    self.log('cch_phi_ratio',
+                             phi / kl_gamma.clamp_min(1e-8),
+                             on_step=True, on_epoch=True)
+                    self.log('cch_clamp_rate',
+                             (unclamped < 0).float().mean(),
+                             on_step=True, on_epoch=True)
+                if 'truncation_rate' in output.diagnostics:
+                    self.log('cch_cts_truncation_rate',
+                             output.diagnostics['truncation_rate'].mean(),
+                             on_step=True, on_epoch=True)
+
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl = self.model.dist_class.comput_kl(logit_p).mean()
@@ -168,7 +225,9 @@ class VAETrainer(pl.LightningModule):
             dist, (loc, log_scale), z, y = self(batch)
             kl = dist.kl().mean()
 
-        if self.cfg['decoder']['type']=="conv":
+        if self.model_name == "hnb":
+            x = batch[0]
+        elif self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 x = batch[0].view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
@@ -200,6 +259,10 @@ class VAETrainer(pl.LightningModule):
         elif self.model_name == "negbio":
             dist, (log_r_post, logit_p), z, y = self(batch)
             kl_diag = self._negative_binomial_kl(log_r_post, logit_p, z)
+        elif self.model_name == "hnb":
+            output = self(batch)
+            z, y = output.latent, output.reconstruction
+            kl_diag = output.kl_diag
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             kl_diag = self.model.dist_class.comput_kl(logit_p)
@@ -211,7 +274,9 @@ class VAETrainer(pl.LightningModule):
             kl_diag = dist.kl()
 
         kl = self._reduce_kl(kl_diag)
-        if self.cfg['decoder']['type']=="conv":
+        if self.model_name == "hnb":
+            x = batch[0]
+        elif self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 x = x.view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
@@ -237,7 +302,13 @@ class VAETrainer(pl.LightningModule):
         self.log('overdispersion_index', overdispersion_index, on_step=True, on_epoch=True, prog_bar=True)
    
 
-        if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
+        if self.model_name == "hnb":
+            real_imgs = batch[0]
+            recon_imgs = y
+            if real_imgs.size(1) == 1:
+                real_imgs = real_imgs.repeat(1, 3, 1, 1)
+                recon_imgs = recon_imgs.repeat(1, 3, 1, 1)
+        elif self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
             real_imgs = batch[0].repeat(1, 3, 1, 1)  
             recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
         elif self.cfg['dataset']['name'] == 'CIFAR16':
@@ -260,7 +331,10 @@ class VAETrainer(pl.LightningModule):
         self._val_inputs.append(real_imgs.detach().cpu())
 
         if batch_idx % 100 == 0:
-            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
+            if self.model_name == "hnb":
+                fig_y = torchvision.utils.make_grid(y, nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0], nrow=10)
+            elif self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
@@ -341,6 +415,7 @@ class VAETrainer(pl.LightningModule):
         rules = {
         ('pm', 1e-2): (model_type == 'poisson' and dataset in ['MNIST', "Omniglot","fmnist"]),
         ('nb', 1e-2): (model_type == 'negbio' and dataset in ['MNIST', "Omniglot","fmnist"]),
+        ('hnb', 1e-2): (model_type == 'hnb' and dataset in ['MNIST', "Omniglot","fmnist"]),
         ('ll', 1e-1): (model_type == 'laplace' and enc_type == 'linear'),
         ('gl', 1e-1): (model_type == 'gaussian' and enc_type == 'linear' and dataset != 'CIFAR10-PATCHES'),
         ('glc', 85e-3): (model_type == 'gaussian' and enc_type == 'linear' and dataset == 'CIFAR10-PATCHES'),
@@ -413,6 +488,11 @@ class VAETrainer(pl.LightningModule):
             else:
                 z_repr = logit_p
             kl_diag = self._negative_binomial_kl(log_r_post, logit_p, z)
+        elif self.model_name == "hnb":
+            output = self(batch)
+            z, y = output.latent, output.reconstruction
+            z_repr = output.representation
+            kl_diag = output.kl_diag
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             z_repr = logit_p
@@ -428,7 +508,9 @@ class VAETrainer(pl.LightningModule):
         else:
             raise ValueError(f"Unsupported model: {self.model_name}")
 
-        if self.cfg['decoder']['type']=="conv":
+        if self.model_name == "hnb":
+            x = batch[0]
+        elif self.cfg['decoder']['type']=="conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 x = x.view(-1, 1, 28, 28)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
@@ -455,7 +537,13 @@ class VAETrainer(pl.LightningModule):
         self._test_labels.append(gt_label.detach().cpu())
 
 
-        if self.cfg['encoder']['type'] == "conv":
+        if self.model_name == "hnb":
+            real_imgs = batch[0]
+            recon_imgs = y
+            if real_imgs.size(1) == 1:
+                real_imgs = real_imgs.repeat(1, 3, 1, 1)
+                recon_imgs = recon_imgs.repeat(1, 3, 1, 1)
+        elif self.cfg['encoder']['type'] == "conv":
             if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 real_imgs = batch[0].repeat(1, 3, 1, 1)
                 recon_imgs = y.view(-1, 1, 28, 28).repeat(1, 3, 1, 1)
@@ -498,7 +586,10 @@ class VAETrainer(pl.LightningModule):
         self._test_inputs.append(real_imgs.detach().cpu())
 
         if batch_idx == 0:
-            if self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
+            if self.model_name == "hnb":
+                fig_y = torchvision.utils.make_grid(y, nrow=10)
+                fig_x = torchvision.utils.make_grid(batch[0], nrow=10)
+            elif self.cfg['dataset']['name'] in ['MNIST', "Omniglot","fmnist"]:
                 fig_y = torchvision.utils.make_grid(y.reshape(-1, 1, 28, 28), nrow=10)
                 fig_x = torchvision.utils.make_grid(batch[0].reshape(-1, 1, 28, 28), nrow=10)
             elif self.cfg['dataset']['name'] == 'CIFAR16':
