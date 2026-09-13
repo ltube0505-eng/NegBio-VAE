@@ -6,7 +6,7 @@ from hnb_model import HNBVAE
 
 
 class HNBModelTest(unittest.TestCase):
-    def _model(self, kl_type="gamma"):
+    def _model(self, kl_type="mc", reparam_type="gamma"):
         return HNBVAE(
             input_channels=1,
             image_size=16,
@@ -14,14 +14,14 @@ class HNBModelTest(unittest.TestCase):
             channels_per_scale=[16, 8],
             latent_channels_per_scale=[4, 3],
             kl_type=kl_type,
-            reparam_type="gamma",
-            tau=0.1,
-            cts_max_count=16,
+            reparam_type=reparam_type,
+            tau=1.0,
+            num_samples=3,
             spatial_sizes=[4, 8],
         )
 
     def test_multiscale_forward_shapes_and_neutral_posterior(self):
-        model = self._model("gamma")
+        model = self._model()
         x = torch.rand(2, 1, 16, 16)
 
         output = model(x)
@@ -43,7 +43,7 @@ class HNBModelTest(unittest.TestCase):
             torch.testing.assert_close(params["beta_q"], params["beta_p"])
 
     def test_forward_backward_has_finite_gradients(self):
-        model = self._model("cch")
+        model = self._model()
         x = torch.rand(2, 1, 16, 16)
 
         output = model(x)
@@ -57,16 +57,13 @@ class HNBModelTest(unittest.TestCase):
         ]
         self.assertTrue(gradients)
         self.assertTrue(all(torch.isfinite(grad).all() for grad in gradients))
-        self.assertIn("kl_gamma", output.diagnostics)
-        self.assertIn("phi", output.diagnostics)
-        self.assertIn("truncation_rate", output.diagnostics)
         self.assertTrue(any(
             ((latent % 1.0) != 0).any().item()
             for latent in output.latents
         ))
 
     def test_prior_generation_runs_top_down_without_encoder(self):
-        model = self._model("gamma")
+        model = self._model()
 
         latent, samples = model.sample_prior(3)
 
@@ -76,7 +73,7 @@ class HNBModelTest(unittest.TestCase):
         self.assertTrue(torch.isfinite(samples).all())
 
     def test_ladder_warmup_activates_groups_from_top_to_bottom(self):
-        model = self._model("gamma")
+        model = self._model()
         group_kl = torch.ones(2, 3)
 
         at_start = model.training_kl(group_kl, warmup_progress=0.0)
@@ -90,8 +87,23 @@ class HNBModelTest(unittest.TestCase):
         torch.testing.assert_close(at_end, torch.full((2,), 3.0))
 
     def test_analytical_nb_kl_is_rejected_for_unshared_dispersion(self):
-        with self.assertRaisesRegex(ValueError, "changes both r and p"):
+        with self.assertRaisesRegex(ValueError, "requires kl='mc'"):
             self._model("analytical")
+
+    def test_non_mc_objective_is_rejected(self):
+        with self.assertRaisesRegex(ValueError, "requires kl='mc'"):
+            self._model("gamma")
+
+    def test_gumbel_sampler_runs_and_temperature_updates(self):
+        model = self._model(reparam_type="gumbel")
+        model.set_temperature(0.25)
+
+        output = model(torch.rand(2, 1, 16, 16))
+
+        self.assertEqual(output.reconstruction.shape, (2, 1, 16, 16))
+        self.assertTrue(torch.isfinite(output.total_kl).all())
+        for layer in model.td_layers:
+            self.assertEqual(layer.relaxation.dist.strategy.tau, 0.25)
 
 
 if __name__ == "__main__":

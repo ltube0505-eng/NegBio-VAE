@@ -127,85 +127,6 @@ class PosteriorNet(nn.Module):
         return _positive(raw_delta_alpha), _positive(raw_delta_beta)
 
 
-class GammaOverlappingRelaxation(nn.Module):
-    """Marginal Gamma relaxation with an exact Gamma--Gamma KL."""
-
-    def __init__(self, rate_scale: float = 5.0):
-        super().__init__()
-        if rate_scale <= 0:
-            raise ValueError("gamma_rate_scale must be positive")
-        self.rate_scale = float(rate_scale)
-
-    def sample_and_kl(self, alpha_p, beta_p, alpha_q, beta_q):
-        rate_p = beta_p * self.rate_scale
-        rate_q = beta_q * self.rate_scale
-        zeta = torch.distributions.Gamma(alpha_q, rate_q).rsample()
-        kl = NegBinomial.gamma_kl(alpha_q, rate_q, alpha_p, rate_p)
-        return zeta, kl, {}
-
-    def sample_prior(self, alpha_p, beta_p):
-        return torch.distributions.Gamma(
-            alpha_p, beta_p * self.rate_scale
-        ).rsample()
-
-    def posterior_mean(self, alpha_q, beta_q):
-        return alpha_q / (beta_q * self.rate_scale)
-
-
-class CCHRelaxation(nn.Module):
-    """Gamma/CTS relaxation with the conjugate KL correction."""
-
-    def __init__(self, tau: float = 0.1, max_count: int = 64,
-                 detach_phi: bool = False):
-        super().__init__()
-        if tau <= 0:
-            raise ValueError("CCH temperature must be positive")
-        if max_count < 1:
-            raise ValueError("cts_max_count must be positive")
-        self.tau = float(tau)
-        self.max_count = int(max_count)
-        self.detach_phi = bool(detach_phi)
-        self.dist = NegBinomial(
-            reparam_type="gamma", tau=tau, cts_max_count=max_count
-        )
-
-    def set_temperature(self, tau: float) -> None:
-        if tau <= 0:
-            raise ValueError("CCH temperature must be positive")
-        self.tau = float(tau)
-
-    def sample_and_kl(self, alpha_p, beta_p, alpha_q, beta_q):
-        log_alpha_p, log_beta_p = alpha_p.log(), beta_p.log()
-        log_alpha_q, log_beta_q = alpha_q.log(), beta_q.log()
-        # This exact zeta is returned to the TD path and reused in phi.
-        zeta = self.dist.rsample(
-            log_alpha_q, log_beta_q, t=self.tau, hard=False
-        )
-        kl, components = self.dist.kl_cch(
-            log_alpha_p,
-            log_beta_p,
-            log_alpha_q,
-            log_beta_q,
-            zeta,
-            detach_phi=self.detach_phi,
-            return_components=True,
-        )
-        diagnostics = dict(components)
-        diagnostics["truncation_rate"] = (
-            self.dist.strategy.last_truncation_rate
-        )
-        return zeta, kl, diagnostics
-
-    def sample_prior(self, alpha_p, beta_p):
-        return self.dist.rsample(
-            alpha_p.log(), beta_p.log(), t=self.tau, hard=False
-        )
-
-    @staticmethod
-    def posterior_mean(alpha_q, beta_q):
-        return alpha_q / beta_q
-
-
 class MonteCarloNBRelaxation(nn.Module):
     """Original relaxed-NB sampler with a Monte Carlo discrete-space KL."""
 
@@ -224,7 +145,11 @@ class MonteCarloNBRelaxation(nn.Module):
         )
 
     def set_temperature(self, tau: float) -> None:
+        if tau <= 0:
+            raise ValueError("temperature must be positive")
         self.tau = float(tau)
+        if self.dist.reparam_type == "gumbel":
+            self.dist.strategy.tau = self.tau
 
     def _sample(self, alpha, beta, hard=False):
         return self.dist.rsample(alpha.log(), beta.log(), self.tau, hard=hard)
@@ -244,7 +169,7 @@ class MonteCarloNBRelaxation(nn.Module):
         log_p = NegBinomial._log_prob(
             samples, alpha_p.log(), beta_p.log()
         )
-        return zeta, (log_q - log_p).mean(dim=0), {}
+        return zeta, (log_q - log_p).mean(dim=0)
 
     def sample_prior(self, alpha_p, beta_p):
         hard = not torch.is_grad_enabled()
@@ -256,28 +181,16 @@ class MonteCarloNBRelaxation(nn.Module):
 
 
 def build_relaxation(kl_type: str, reparam_type: str, tau: float,
-                     max_count: int, num_samples: int,
-                     cts_max_count: int, cch_detach_phi: bool,
-                     gamma_rate_scale: float) -> nn.Module:
-    if kl_type == "gamma":
-        if reparam_type != "gamma":
-            raise ValueError("HNB gamma KL requires reparam_type='gamma'")
-        return GammaOverlappingRelaxation(gamma_rate_scale)
-    if kl_type == "cch":
-        if reparam_type != "gamma":
-            raise ValueError("HNB CCH KL requires reparam_type='gamma'")
-        return CCHRelaxation(tau, cts_max_count, cch_detach_phi)
-    if kl_type == "mc":
-        return MonteCarloNBRelaxation(
-            reparam_type, tau, max_count, num_samples
-        )
-    if kl_type == "analytical":
+                     max_count: int, num_samples: int) -> nn.Module:
+    if kl_type != "mc":
         raise ValueError(
-            "HNB does not support the one-layer analytical NB KL: its "
-            "conditional posterior changes both r and p. Use kl='gamma', "
-            "'cch', or 'mc'."
+            "HNB changes both negative-binomial parameters at every group, "
+            "so it requires kl='mc'. The one-layer analytical objective is "
+            "only valid when dispersion is shared."
         )
-    raise ValueError(f"Unsupported HNB KL type: {kl_type}")
+    return MonteCarloNBRelaxation(
+        reparam_type, tau, max_count, num_samples
+    )
 
 
 class HNBLayer(nn.Module):
@@ -319,7 +232,7 @@ class HNBLayer(nn.Module):
         delta_alpha, delta_beta = self.posterior_net(e, d)
         alpha_q = (alpha_p * delta_alpha).clamp(1e-3, 100.0)
         beta_q = (beta_p / delta_beta).clamp(1e-3, 100.0)
-        zeta, kl, diagnostics = self.relaxation.sample_and_kl(
+        zeta, kl = self.relaxation.sample_and_kl(
             alpha_p, beta_p, alpha_q, beta_q
         )
         d = d + self.td_block(zeta)
@@ -329,7 +242,7 @@ class HNBLayer(nn.Module):
             "alpha_q": alpha_q,
             "beta_q": beta_q,
         }
-        return d, zeta, kl, params, diagnostics
+        return d, zeta, kl, params
 
 
 @dataclass
@@ -342,7 +255,6 @@ class HNBOutput:
     total_kl: torch.Tensor
     latents: List[torch.Tensor]
     parameters: List[Dict[str, torch.Tensor]]
-    diagnostics: Dict[str, torch.Tensor]
 
 
 class HNBVAE(nn.Module):
@@ -368,14 +280,11 @@ class HNBVAE(nn.Module):
         groups_per_scale: Sequence[int],
         channels_per_scale: Sequence[int],
         latent_channels_per_scale: Sequence[int],
-        kl_type: str = "cch",
+        kl_type: str = "mc",
         reparam_type: str = "gamma",
         tau: float = 0.1,
         max_count: int = 15,
         num_samples: int = 5,
-        cts_max_count: int = 64,
-        cch_detach_phi: bool = False,
-        gamma_rate_scale: float = 5.0,
         spatial_sizes: Optional[Sequence[int]] = None,
         free_bits: float = 0.0,
         kl_balance: str = "uniform",
@@ -468,9 +377,6 @@ class HNBVAE(nn.Module):
                     tau=tau,
                     max_count=max_count,
                     num_samples=num_samples,
-                    cts_max_count=cts_max_count,
-                    cch_detach_phi=cch_detach_phi,
-                    gamma_rate_scale=gamma_rate_scale,
                 )
                 self.td_layers.append(HNBLayer(
                     self.channels_per_scale[s],
@@ -539,14 +445,11 @@ class HNBVAE(nn.Module):
             groups_per_scale=groups,
             channels_per_scale=channels,
             latent_channels_per_scale=latent_channels,
-            kl_type=model_cfg.get("kl", "cch"),
+            kl_type=model_cfg.get("kl", "mc"),
             reparam_type=model_cfg.get("reparam_type", "gamma"),
             tau=model_cfg.get("tau", 0.1),
             max_count=model_cfg.get("max_count", 15),
             num_samples=model_cfg.get("num_samples", 5),
-            cts_max_count=model_cfg.get("cts_max_count", 64),
-            cch_detach_phi=model_cfg.get("cch_detach_phi", False),
-            gamma_rate_scale=model_cfg.get("gamma_rate_scale", 5.0),
             spatial_sizes=model_cfg.get("spatial_sizes"),
             free_bits=model_cfg.get("free_bits", 0.0),
             kl_balance=model_cfg.get("kl_balance", "uniform"),
@@ -622,7 +525,6 @@ class HNBVAE(nn.Module):
         kl_channels = []
         kl_groups = []
         representations = []
-        diagnostic_groups: Dict[str, List[torch.Tensor]] = {}
         layer_idx = 0
         for s, n_groups in enumerate(self.groups_per_scale):
             if s > 0:
@@ -633,7 +535,7 @@ class HNBVAE(nn.Module):
                 )
                 d = self.td_transitions[s - 1](d)
             for _ in range(n_groups):
-                d, zeta, kl, params, diagnostics = self.td_layers[layer_idx](
+                d, zeta, kl, params = self.td_layers[layer_idx](
                     d, e_list[layer_idx]
                 )
                 latents.append(zeta)
@@ -644,12 +546,6 @@ class HNBVAE(nn.Module):
                     params["alpha_q"], params["beta_q"]
                 )
                 representations.append(mean_q.mean(dim=(2, 3)))
-                for name, value in diagnostics.items():
-                    if value.ndim == 0:
-                        value = value.expand(x.size(0))
-                    else:
-                        value = value.flatten(1).sum(dim=1)
-                    diagnostic_groups.setdefault(name, []).append(value)
                 layer_idx += 1
 
         kl_diag = torch.cat(kl_channels, dim=1)
@@ -659,10 +555,6 @@ class HNBVAE(nn.Module):
             [z.mean(dim=(2, 3)) for z in latents], dim=1
         )
         representation = torch.cat(representations, dim=1)
-        diagnostics = {
-            name: torch.stack(values, dim=1)
-            for name, values in diagnostic_groups.items()
-        }
         return HNBOutput(
             reconstruction=self._decode(d),
             latent=latent,
@@ -672,7 +564,6 @@ class HNBVAE(nn.Module):
             total_kl=total_kl,
             latents=latents,
             parameters=parameters,
-            diagnostics=diagnostics,
         )
 
     def sample_prior(self, num_samples: int):
