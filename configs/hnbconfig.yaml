@@ -7,13 +7,10 @@ model:
   # compatibility with filenames produced by the existing evaluation code.
   latent_dim: 128
   reparam_type: gamma
-  kl: cch                 # cch, gamma (Gamma-overlapping), or mc
-  tau: 0.1
+  kl: mc                  # required for HNB because both r and p vary
+  tau: 1.0
   max_count: 30
   num_samples: 5
-  cts_max_count: 64
-  cch_detach_phi: false
-  gamma_rate_scale: 5.0
 
   # Ordered from the top/coarsest scale to the bottom/finest scale.
   groups_per_scale: [4, 4]

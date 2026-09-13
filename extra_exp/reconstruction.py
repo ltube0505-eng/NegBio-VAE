@@ -42,7 +42,7 @@ FLAGS = flags.FLAGS
 flags.DEFINE_string("ckpt", None, "Path to checkpoint")
 flags.DEFINE_string("config_path", "configs/train_config.yaml", "Path to config yaml")
 flags.DEFINE_string("model_type", "negbio", "Model type: negbio, poisson, laplace, gaussian or categorical")
-flags.DEFINE_string("kl", "gamma", "type: mc, analytical, or cch")
+flags.DEFINE_string("kl", "analytical", "type: mc or analytical")
 flags.DEFINE_string("reparam_type", "gumbel", "Model type: gamma or gumbel")
 flags.DEFINE_string("dataset", "CIFAR16", "Dataset name (CIFAR10, CelebA64, etc.)")
 flags.DEFINE_integer("num_samples", 64, "Number of generated images")
@@ -51,9 +51,6 @@ flags.DEFINE_integer("mc_sample", 5, "# of samples for kl mc")
 flags.DEFINE_string("enc_type", "conv", "Choice of [linear, conv, mlp]")
 flags.DEFINE_string("dec_type", "conv", "Choice of [linear, conv, mlp]")
 flags.DEFINE_float('beta', 0.0, 'beta for kl')
-flags.DEFINE_float("cch_tau", 0.1, "CCH CTS temperature")
-flags.DEFINE_integer("cts_max_count", 64, "CCH CTS truncation M")
-flags.DEFINE_bool("cch_detach_phi", False, "Detach reused CTS sample in CCH correction")
 
 
 @torch.no_grad()
@@ -122,10 +119,6 @@ def main(argrv):
     cfg["encoder"]["type"] = FLAGS.enc_type
     cfg["decoder"]["type"] = FLAGS.dec_type
     cfg["model"]["beta"] = FLAGS.beta
-    if FLAGS.kl == "cch":
-        cfg["model"]["tau"] = FLAGS.cch_tau
-    cfg["model"]["cts_max_count"] = FLAGS.cts_max_count
-    cfg["model"]["cch_detach_phi"] = FLAGS.cch_detach_phi
 
     # cfg["model"]["latent_dim"] = 512
     # cfg["encoder"]["latent_dim"] = 512

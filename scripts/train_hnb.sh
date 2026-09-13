@@ -8,9 +8,8 @@ CUDA_VISIBLE_DEVICES="${CUDA_VISIBLE_DEVICES:-0}" python dis_main.py \
   --dataset MNIST \
   --model_type hnb \
   --reparam_type gamma \
-  --kl cch \
-  --cch_tau 0.1 \
-  --cts_max_count 64 \
+  --kl mc \
+  --tau 1.0 \
   --hnb_groups_per_scale 4,4 \
   --hnb_channels_per_scale 64,32 \
   --hnb_latent_channels_per_scale 16,16 \

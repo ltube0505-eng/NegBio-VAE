@@ -12,11 +12,9 @@ model:
   reparam_type: "gumbel"      # "gumbel" or "gamma" - only useful for Negbio-VAE
   max_count: 5                # only useful for Negbio-VAE with gumbel
   tau: 1.0                    # temperature
-  kl: "analytical"            # mc, analytical (dispersion sharing), or cch
+  kl: "analytical"            # mc or analytical (dispersion sharing)
   latent_act: "sigmoid"       
   num_samples: 5 
-  cts_max_count: 64           # CCH only: fixed CTS truncation M
-  cch_detach_phi: false       # false = full path gradient through reused CTS sample
   beta: 0                     # default 0 for auto annealing  
   kl_annealing: True    
 # ===============================
