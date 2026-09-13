@@ -52,16 +52,12 @@ class GammaSampler:
                  t=0.0,
                  num_samples = 5):
         self.t = t
-        self._cached_log_r = None
-        self._cached_logit_p = None
         self.num_samples = num_samples
 
     def __call__(self, 
                  log_r,
                  logit_p, 
                  hard=False):
-        self._cached_log_r = log_r
-        self._cached_logit_p = logit_p
         return self.rsample(log_r, logit_p, hard)
 
     @property
@@ -90,31 +86,6 @@ class GammaSampler:
         z = indicator.sum(0).float()
         return z
 
-    def kl_mc(self, log_r_prior, logit_p_prior, num_samples=5):
-
-        log_r_post = self._cached_log_r
-        logit_p_post = self._cached_logit_p
-
-        r_q = torch.exp(log_r_post.clamp(None, 5)) + 1e-6
-        
-        p_q = torch.sigmoid(logit_p_post.clamp(-5, 5))
-
-        rate_q = p_q / (1 - p_q + 1e-8)
-
-        q_dist = torch.distributions.Gamma(r_q, rate_q)
-
-        r_p = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
-        p_p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
-    
-
-        rate_p = p_p / (1 - p_p + 1e-8)                              
-        p_dist = torch.distributions.Gamma(r_p, rate_p)
-
-        samples = q_dist.rsample((num_samples,))
-        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean(dim=0)
-        return kl
-
-
 class GumbelSampler(nn.Module):
     def __init__(self, 
                  max_count=15, 
@@ -124,14 +95,9 @@ class GumbelSampler(nn.Module):
         self.max_count = max_count
         self.tau = tau
         self.register_buffer("count_range", torch.arange(max_count).float())
-        self._cached_log_r = None
-        self._cached_logit_p = None
         self.num_samples = num_samples
 
     def forward(self, log_r, logit_p, hard=False):
-        self._cached_log_r = log_r
-        self._cached_logit_p = logit_p
-
         r = torch.exp(log_r.clamp(None, 5)) + 1e-6
         p = torch.sigmoid(logit_p.clamp(-5, 5))
 
@@ -153,30 +119,6 @@ class GumbelSampler(nn.Module):
         z = (y * self.count_range.to(rate.device)).sum(-1)
         return z
     
-    def kl_mc(self, log_r_prior, logit_p_prior):
-
-        log_r_post = self._cached_log_r
-        logit_p_post = self._cached_logit_p
-
-        r_q = torch.exp(log_r_post.clamp(None, 5)) + 1e-6
-        p_q = torch.sigmoid(logit_p_post.clamp(-5, 5))
-
-        rate_q = p_q /(1 - p_q + 1e-8)
-
-        q_dist = torch.distributions.Gamma(r_q, rate_q)
-
-        r_p = torch.exp(log_r_prior.clamp(None, 5)) + 1e-6
-        p_p = torch.sigmoid(logit_p_prior.clamp(-5, 5))
-        
-        rate_p = p_p / (1 - p_p + 1e-8)                              
-
-        p_dist = torch.distributions.Gamma(r_p, rate_p)
-
-        samples = q_dist.rsample((self.num_samples,))
-        kl = (q_dist.log_prob(samples) - p_dist.log_prob(samples)).mean(dim=0)
-        return kl
-
-
 class NegBinomial(nn.Module):
     def __init__(self, 
                  reparam_type="gamma", 
@@ -216,13 +158,38 @@ class NegBinomial(nn.Module):
         term = torch.log(b) + (1 - ab)/(ab + 1e-8) * torch.log((1 - ab + 1e-8) / (1 - a + 1e-8))
         return r * term
 
-    def kl_mc(self, log_r_prior, logit_p_prior):
-        if self.reparam_type == "gamma":
-            return self.strategy.kl_mc(log_r_prior, logit_p_prior)
-        elif self.reparam_type == "gumbel":
-            return self.strategy.kl_mc(log_r_prior, logit_p_prior)
-        else:
-            raise NotImplementedError(f"No KL_MC implemented for reparam_type: {self.reparam_type}")
+    @staticmethod
+    def _log_prob(z, log_r, logit_p):
+        """Log PMF of NB(r, p), with mean r * (1 - p) / p."""
+        z = z.clamp_min(0.0)
+        log_r = log_r.clamp(max=5)
+        logit_p = logit_p.clamp(-5, 5)
+        r = torch.exp(log_r) + 1e-6
+        log_p = F.logsigmoid(logit_p)
+        log_one_minus_p = F.logsigmoid(-logit_p)
+        return (
+            torch.lgamma(z + r)
+            - torch.lgamma(r)
+            - torch.lgamma(z + 1.0)
+            + r * log_p
+            + z * log_one_minus_p
+        )
+
+    def kl_mc(self, log_r_prior, logit_p_prior, log_r_post, logit_p_post):
+        """Monte Carlo estimate E_q[log NB_q(z) - log NB_p(z)].
+
+        The strategy supplies differentiable relaxed NB samples. At zero
+        temperature these are integer counts and ``_log_prob`` is the exact
+        negative-binomial log PMF; at finite temperature this is its smooth
+        gamma-function extension evaluated at the relaxed count.
+        """
+        samples = torch.stack([
+            self.strategy(log_r_post, logit_p_post, hard=False)
+            for _ in range(self.num_samples)
+        ], dim=0)
+        log_q = self._log_prob(samples, log_r_post, logit_p_post)
+        log_p = self._log_prob(samples, log_r_prior, logit_p_prior)
+        return (log_q - log_p).mean(dim=0)
     
 
 class Categorical(RelaxedOneHotCategorical):

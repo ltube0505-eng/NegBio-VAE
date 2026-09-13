@@ -38,7 +38,8 @@ class VAETrainer(pl.LightningModule):
                 max_count = cfg['model']['max_count'],
                 tau = cfg['model']['tau'],
                 latent_act= cfg['model']['latent_act'],
-                num_samples = cfg['model']['num_samples']
+                num_samples = cfg['model']['num_samples'],
+                kl_type = cfg['model']['kl']
             )
 
         self.log_images = self.cfg.get('eval', {}).get('log_images', True)
@@ -97,10 +98,12 @@ class VAETrainer(pl.LightningModule):
             dist, du, z, y = self(batch)
             kl = dist.kl(self.model.prior, du).mean()
         elif self.model_name == "negbio":
-            dist, logit_p, z, y = self(batch)
+            dist, (log_r_post, logit_p), z, y = self(batch)
             if self.cfg['model']['kl'] == "mc":
                 kl =  self.model.dist_class.kl_mc(self.model.log_r_prior,
-                                          self.model.logit_p_prior
+                                          self.model.logit_p_prior,
+                                          log_r_post,
+                                          logit_p
                                         ).mean()
 
             else:
@@ -151,10 +154,12 @@ class VAETrainer(pl.LightningModule):
             dist, du, z, y = self(batch)
             kl_diag = dist.kl(self.model.prior, du)
         elif self.model_name == "negbio":
-            dist, logit_p, z, y = self(batch)
+            dist, (log_r_post, logit_p), z, y = self(batch)
             if self.cfg['model']['kl'] == "mc":
                 kl_diag =  self.model.dist_class.kl_mc(self.model.log_r_prior,
-                                          self.model.logit_p_prior
+                                          self.model.logit_p_prior,
+                                          log_r_post,
+                                          logit_p
                                         )
             else:
                 kl_diag = self.model.dist_class.kl(
@@ -368,12 +373,21 @@ class VAETrainer(pl.LightningModule):
             z_repr = du
             kl_diag = dist.kl(self.model.prior, du)
         elif self.model_name == "negbio":
-            dist, lp, z, y = self(batch)
-            z_repr = lp
+            dist, (log_r_post, logit_p), z, y = self(batch)
+            z_repr = logit_p
             if self.cfg['model']['kl'] == "mc":
-                kl_diag = self.model.dist_class.kl_mc(self.model.log_r_prior, self.model.logit_p_prior)
+                kl_diag = self.model.dist_class.kl_mc(
+                    self.model.log_r_prior,
+                    self.model.logit_p_prior,
+                    log_r_post,
+                    logit_p
+                )
             else:
-                kl_diag = self.model.dist_class.kl(self.model.log_r_prior, self.model.logit_p_prior, lp)
+                kl_diag = self.model.dist_class.kl(
+                    self.model.log_r_prior,
+                    self.model.logit_p_prior,
+                    logit_p
+                )
         elif self.model_name == "categorical":
             dist, logit_p, z, y = self(batch)
             z_repr = logit_p

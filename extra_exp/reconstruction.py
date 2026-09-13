@@ -69,7 +69,7 @@ def test_recon_loss(model, data_loader, device='cuda', data_range=1.0):
     for x, label in data_loader:
         x = x.to(device).float()
         if dist_type == "negbio":
-            dist, lp, z, y = m(x)
+            dist, (log_r_post, logit_p), z, y = m(x)
         elif dist_type == "gaussian":
             dist, (loc, log_scale), z, y = m(x)
         elif dist_type == "laplace":

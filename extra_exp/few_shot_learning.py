@@ -58,8 +58,8 @@ def get_latents(lit_model, dataloader, device):
     for x,label in dataloader:
         x = x.to(device)
         if dist_type == "negbio":
-            dist, lp, z, y = m(x)
-            z_repr = lp     
+            dist, (log_r_post, logit_p), z, y = m(x)
+            z_repr = logit_p
         elif dist_type == "gaussian":
             dist, (loc, log_scale), z, y = m(x)
             z_repr = loc

@@ -31,6 +31,7 @@ class GenericVAE(nn.Module):
                  tau = 1.0,
                  latent_act = "sigmoid",
                  num_samples = 5,
+                 kl_type = "analytical",
                  **kwargs
                  ):
         super(GenericVAE, self).__init__()
@@ -40,6 +41,7 @@ class GenericVAE(nn.Module):
         self.reparam_type = reparam_type
         self.max_count = max_count
         self.tau = tau
+        self.kl_type = kl_type
         
         self.encode = encoder 
         self.decode = decoder 
@@ -95,10 +97,20 @@ class GenericVAE(nn.Module):
             return dist, du, z, y
 
         elif self.dist_type == "negbio":
-            logit_p = self.encode(x).clamp(-5, 5)
-            z = self.dist_class.rsample(self.log_r_prior, logit_p, self.t, hard=validation)         
+            encoded = self.encode(x)
+            if self.kl_type == "mc":
+                log_delta_r, logit_p = encoded.chunk(2, dim=-1)
+                # Paper parameterization: r_q(x) = r_p * delta_r(x).
+                log_r_post = self.log_r_prior + log_delta_r.clamp(-5, 5)
+            else:
+                # Dispersion sharing: r_q(x) = r_p.
+                logit_p = encoded
+                log_r_post = self.log_r_prior.expand_as(logit_p)
+
+            logit_p = logit_p.clamp(-5, 5)
+            z = self.dist_class.rsample(log_r_post, logit_p, self.t, hard=validation)
             y = self.decode(z)
-            return self.dist_class, logit_p, z, y
+            return self.dist_class, (log_r_post, logit_p), z, y
         elif self.dist_type == "categorical":
             logit_p = self.encode(x) 
             self.dist_class = Categorical(logits=logit_p)
