@@ -14,10 +14,12 @@ def build_encoder(cfg):
     encoder_cfg = cfg['encoder']
     name = encoder_cfg['type'].lower()
     dist_type = cfg['model']['name']
+    kl_type = cfg['model'].get('kl', 'analytical')
     base_latent_dim = encoder_cfg.get('latent_dim', 128)
     latent_dim = (
             base_latent_dim * 2 
-            if dist_type in ['laplace', 'gaussian'] 
+            if dist_type in ['laplace', 'gaussian']
+            or (dist_type == 'negbio' and kl_type == 'mc')
             else base_latent_dim
         )
 
