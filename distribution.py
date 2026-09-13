@@ -178,13 +178,14 @@ class NegBinomial(nn.Module):
     def kl_mc(self, log_r_prior, logit_p_prior, log_r_post, logit_p_post):
         """Monte Carlo estimate E_q[log NB_q(z) - log NB_p(z)].
 
-        The strategy supplies differentiable relaxed NB samples. At zero
-        temperature these are integer counts and ``_log_prob`` is the exact
-        negative-binomial log PMF; at finite temperature this is its smooth
-        gamma-function extension evaluated at the relaxed count.
+        Training uses differentiable relaxed NB samples, so ``_log_prob`` is
+        evaluated through its smooth gamma-function extension. No-grad
+        validation and testing use hard integer counts, where it is the exact
+        negative-binomial log PMF.
         """
+        hard = not torch.is_grad_enabled()
         samples = torch.stack([
-            self.strategy(log_r_post, logit_p_post, hard=False)
+            self.strategy(log_r_post, logit_p_post, hard=hard)
             for _ in range(self.num_samples)
         ], dim=0)
         log_q = self._log_prob(samples, log_r_post, logit_p_post)
